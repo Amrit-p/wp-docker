@@ -104,8 +104,7 @@ against those keys.
           "env": {
             "MARIADB_DATABASE": "example",
             "MARIADB_USER": "example",
-            "MARIADB_PASSWORD": "change-me",
-            "MARIADB_ROOT_PASSWORD": "change-me"
+            "MARIADB_PASSWORD": "change-me"
           }
         }
       ],
@@ -209,8 +208,9 @@ it and leaves the data alone.
 
 Creating a user is a `root` job, so this operation connects as `root` over the container's
 own socket with `--root_password`. That is the `MARIADB_ROOT_PASSWORD` the container was
-started with, which for a site listed in `sites.json` is the one in its `wpdock-mariadb`
-container's `env`.
+started with. `sites.json` does not carry it: a root password is the one secret in the
+stack that nothing but this operation needs, so it stays out of the file that describes
+every site and is passed on the command line, once, when a user is created.
 
 #### db --import
 
