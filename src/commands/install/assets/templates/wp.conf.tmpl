@@ -1,0 +1,39 @@
+{{/*
+  Rendered by `wpdock deploy --stack=wp` into <prefix>/nginx/conf/<name>.conf.
+  Edit this and every site deployed from now on picks up the change.
+
+    {{.Name}}        site name, e.g. blog
+    {{.ServerName}}  the server_name value, e.g. blog.test
+    {{.Root}}        the site's docroot, <prefix>/data/<name>
+    {{.Prefix}}      the install prefix
+    {{.PHP}}         what to hand .php to, e.g. unix:/run/php/php8.3-fpm.sock
+*/ -}}
+# wpdock site: {{.Name}} (wordpress)
+
+server {
+    listen       80;
+    server_name  {{.ServerName}};
+    root         {{.Root}};
+    index        index.php index.html;
+
+    include {{.Prefix}}/nginx/conf.d/security.conf;
+
+    # Pretty permalinks: WordPress routes anything that is not a real file.
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    location ~ \.php$ {
+        include {{.Prefix}}/nginx/conf.d/fastcgi.conf;
+        fastcgi_pass {{.PHP}};
+    }
+
+    # An upload that ends in .php is a payload, not a script to run.
+    location ~* /wp-content/uploads/.*\.php$ {
+        deny all;
+    }
+
+    location ~* /(?:wp-config\.php|readme\.html|license\.txt) {
+        deny all;
+    }
+}

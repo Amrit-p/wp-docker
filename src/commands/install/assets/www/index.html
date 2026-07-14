@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wpdock</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: Canvas;
+    color: CanvasText;
+  }
+  main { max-width: 34rem; padding: 2rem; }
+  h1 { margin: 0 0 .25rem; font-size: 1.5rem; }
+  p { margin: 0 0 1.5rem; opacity: .7; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .875rem;
+  }
+  pre {
+    margin: 0;
+    padding: 1rem;
+    overflow-x: auto;
+    border-radius: .5rem;
+    background: color-mix(in srgb, CanvasText 6%, Canvas);
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>wpdock is installed</h1>
+  <p>Nothing is deployed at this host name yet, so you are seeing the shared webroot.</p>
+  <pre><code>prefix   {{.Root}}
+webroot  {{.Root}}/www
+
+wpdock deploy --name=blog --stack=wp</code></pre>
+</main>
+</body>
+</html>

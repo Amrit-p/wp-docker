@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"wpdock/src/commands/deploy"
+	"wpdock/src/commands/install"
 )
 
 type command struct {
@@ -14,7 +15,8 @@ type command struct {
 }
 
 var commands = map[string]command{
-	"deploy": {run: deploy.Run, usage: deploy.Usage},
+	"deploy":  {run: deploy.Run, usage: deploy.Usage},
+	"install": {run: install.Run, usage: install.Usage},
 }
 
 func main() {
