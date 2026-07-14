@@ -1,3 +1,31 @@
 {
-  "sites": []
+  "sites": {
+    "example": {
+      "stack": "wordpress",
+      "wordpress": "6.8",
+      "php": "8.3",
+      "containers": [
+        {
+          "name": "wpdock-nginx",
+          "env": {
+            "NGINX_HOST": "example.test"
+          }
+        },
+        {
+          "name": "wpdock-mariadb",
+          "env": {
+            "MARIADB_DATABASE": "example",
+            "MARIADB_USER": "example",
+            "MARIADB_PASSWORD": "change-me",
+            "MARIADB_ROOT_PASSWORD": "change-me"
+          }
+        }
+      ],
+      "resources": {
+        "memory": "512m",
+        "cpus": "1.0",
+        "max_pids": 256
+      }
+    }
+  }
 }

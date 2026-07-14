@@ -37,8 +37,12 @@
   <p>Nothing is deployed at this host name yet, so you are seeing the shared webroot.</p>
   <pre><code>prefix   {{.Root}}
 webroot  {{.Root}}/www
+sites    {{.Root}}/sites.json
 
-wpdock deploy --name=blog --stack=wp</code></pre>
+sites.json ships with an "example" site. Copy it, rename it,
+then deploy it by name:
+
+wpdock deploy --prefix={{.Root}} --name=example</code></pre>
 </main>
 </body>
 </html>

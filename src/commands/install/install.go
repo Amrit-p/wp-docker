@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
+
+	"wpdock/src/prefix"
 )
 
 func Usage() {
@@ -20,7 +21,7 @@ func Usage() {
 func Run(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.Usage = Usage
-	prefix := fs.String("prefix", "", "directory to install into")
+	dir := fs.String("prefix", "", "directory to install into")
 	force := fs.Bool("force", false, "rewrite generated files that already exist")
 	yes := fs.Bool("yes", false, "skip the confirmation prompt")
 
@@ -31,18 +32,13 @@ func Run(args []string) error {
 		return err
 	}
 
-	if *prefix == "" {
+	if *dir == "" {
 		return fmt.Errorf("install: --prefix is required")
 	}
 
-	expanded, err := expandTilde(*prefix)
+	root, err := prefix.Resolve(*dir)
 	if err != nil {
-		return fmt.Errorf("install: %s: %v", *prefix, err)
-	}
-
-	root, err := filepath.Abs(expanded)
-	if err != nil {
-		return fmt.Errorf("install: %s: %v", *prefix, err)
+		return fmt.Errorf("install: %s: %v", *dir, err)
 	}
 
 	if info, err := os.Stat(root); err == nil && !info.IsDir() {
@@ -80,19 +76,6 @@ func Run(args []string) error {
 
 	fmt.Printf("\ninstalled %s\n", root)
 	return nil
-}
-
-func expandTilde(path string) (string, error) {
-	if path != "~" && !strings.HasPrefix(path, "~/") {
-		return path, nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
 }
 
 func confirm() (bool, error) {

@@ -7,28 +7,30 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"wpdock/src/prefix"
 )
 
 type Deployer interface {
-	Deploy(site string) error
+	Deploy(site Site) error
 }
 
 var deployers = map[string]Deployer{
-	"wp":  WP{},
-	"php": PHP{},
+	"wordpress": WP{},
+	"php":       PHP{},
 }
 
 func Usage() {
-	fmt.Fprintf(os.Stderr, `  deploy --name=<site> --stack=<stack>
-        deploy a site. stacks: %s
+	fmt.Fprintf(os.Stderr, `  deploy --prefix=<path> --name=<site>
+        deploy a site listed in <path>/sites.json. stacks: %s
 `, strings.Join(stacks(), ", "))
 }
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	fs.Usage = Usage
-	site := fs.String("name", "", "name of the site to deploy")
-	stack := fs.String("stack", "", "stack to deploy: "+strings.Join(stacks(), ", "))
+	dir := fs.String("prefix", "", "directory wpdock was installed into")
+	name := fs.String("name", "", "name of the site to deploy")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -37,20 +39,35 @@ func Run(args []string) error {
 		return err
 	}
 
-	if *site == "" {
+	if *dir == "" {
+		return fmt.Errorf("deploy: --prefix is required")
+	}
+
+	if *name == "" {
 		return fmt.Errorf("deploy: --name is required")
 	}
 
-	if *stack == "" {
-		return fmt.Errorf("deploy: --stack is required (want one of: %s)", strings.Join(stacks(), ", "))
+	root, err := prefix.Resolve(*dir)
+	if err != nil {
+		return fmt.Errorf("deploy: %s: %v", *dir, err)
 	}
 
-	d, ok := deployers[*stack]
+	sites, err := load(root)
+	if err != nil {
+		return fmt.Errorf("deploy: %v", err)
+	}
+
+	site, err := find(sites, *name)
+	if err != nil {
+		return fmt.Errorf("deploy: %v", err)
+	}
+
+	d, ok := deployers[site.Stack]
 	if !ok {
-		return fmt.Errorf("deploy: unknown stack %q (want one of: %s)", *stack, strings.Join(stacks(), ", "))
+		return fmt.Errorf("deploy: %s: unknown stack %q in sites.json (want one of: %s)", site.Name, site.Stack, strings.Join(stacks(), ", "))
 	}
 
-	return d.Deploy(*site)
+	return d.Deploy(site)
 }
 
 func stacks() []string {

@@ -36,7 +36,7 @@ var files = []file{
 	{path: "nginx/nginx.conf", asset: "assets/nginx.conf", render: true},
 	{path: "nginx/conf.d/fastcgi.conf", asset: "assets/conf.d/fastcgi.conf"},
 	{path: "nginx/conf.d/security.conf", asset: "assets/conf.d/security.conf"},
-	{path: "nginx/templates/wp.conf.tmpl", asset: "assets/templates/wp.conf.tmpl"},
+	{path: "nginx/templates/wordpress.conf.tmpl", asset: "assets/templates/wordpress.conf.tmpl"},
 	{path: "nginx/templates/php.conf.tmpl", asset: "assets/templates/php.conf.tmpl"},
 	{path: "www/index.html", asset: "assets/www/index.html", render: true},
 }
