@@ -18,6 +18,7 @@ type command struct {
 var commands = map[string]command{
 	"install":                {run: install.Run, usage: install.Usage},
 	"db":                     {run: db.Run, usage: db.Usage},
+	"ssl":                    {run: site.SSL, usage: site.SSLUsage},
 	"site-add":               {run: site.Add, usage: site.AddUsage},
 	"site-update":            {run: site.Update, usage: site.UpdateUsage},
 	"site-list":              {run: site.List, usage: site.ListUsage},

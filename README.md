@@ -26,9 +26,10 @@ Run `./main` with no arguments to list the available commands, or
 `./main <command> -h` to see the flags for one command.
 
 Every command accepts `--prefix`, and it defaults to the current directory — so you can `cd` into
-your install tree and leave it off. The commands that read or write files under it (`install` and
-`site-add`/`update`/`nuke`/`backup`/`restore`/`shell`) use it; the rest (`db`, `site-list`,
-`site-details`, `site-stop`) accept it for consistency but act on containers, not the tree.
+your install tree and leave it off. The commands that read or write files under it (`install`,
+`ssl` and `site-add`/`update`/`nuke`/`backup`/`restore`/`shell`) use it; the rest (`db`,
+`site-list`, `site-details`, `site-stop`) accept it for consistency but act on containers, not
+the tree.
 
 ## Commands
 
@@ -54,21 +55,23 @@ safe: without `--force` every file that already exists is skipped.
   docker-compose.yml             the shared nginx + mariadb services, on the wpdock network
   data/                          per-site docroots: data/<site-name>/, bind-mounted in
   backups/                       site-backup writes the .tgz and .json here
+  certs/                         Let's Encrypt state, mounted into certbot as /etc/letsencrypt
   nginx/
     nginx.conf                   generated main config for the shared nginx container
     conf/                        per-site vhosts, written by site-add
     conf.d/
       security.conf              headers and deny rules, included by every vhost
     templates/
-      site.conf.tmpl             the vhost every site renders
+      site.conf.tmpl             the vhost every plain-http site renders
+      site-ssl.conf.tmpl         the vhost a site renders once `ssl` has its certificate
     logs/                        nginx error, access and pid files
     tmp/                         nginx client body, proxy and fastcgi temp files
   www/                           shared webroot, holds the default page
 ```
 
 Everything here is regenerated from the binary, so `--force` overwrites local edits to
-`nginx.conf`, `security.conf` or the template. `data/` and `backups/` hold your sites and
-are only ever added to, never rewritten.
+`nginx.conf`, `security.conf` or the templates. `data/`, `backups/` and `certs/` hold your
+sites and are only ever added to, never rewritten.
 
 ## Shared containers
 
@@ -77,7 +80,7 @@ The `site-*` and `db` commands rely on two long-lived containers on a Docker net
 
 | Container | Role |
 | --- | --- |
-| `wpdock-nginx-1.27` | The reverse proxy on port 80. The compose file runs the official `nginx` image with `<prefix>` mounted at the same path (so the absolute paths in `nginx.conf` resolve) via `nginx -c <prefix>/nginx/nginx.conf`. It serves `nginx.conf` and picks up the vhosts `site-add` writes into `conf/`. To apply a new vhost, `site-add` finds the proxy by its `wpdock.role=proxy` label — not its name, so the nginx version can change freely — and sends it `SIGHUP` (`docker kill --signal=HUP`), which the nginx master turns into a graceful reload. |
+| `wpdock-nginx-1.27` | The reverse proxy on ports 80 and 443. The compose file runs the official `nginx` image with `<prefix>` mounted at the same path (so the absolute paths in `nginx.conf` resolve) via `nginx -c <prefix>/nginx/nginx.conf`. It serves `nginx.conf` and picks up the vhosts `site-add` writes into `conf/`. To apply a new vhost, `site-add` finds the proxy by its `wpdock.role=proxy` label — not its name, so the nginx version can change freely — and sends it `SIGHUP` (`docker kill --signal=HUP`), which the nginx master turns into a graceful reload. |
 | `wpdock-mariadb-11` | The shared database. `db --create-user` provisions a database and user in it; each site connects to it with `--db-host=wpdock-mariadb-11`. Its data persists in the `wpdock-mariadb-data` volume. |
 
 Bring them up once, from anywhere:
@@ -88,7 +91,7 @@ docker compose -f <prefix>/docker-compose.yml up -d
 
 The MariaDB root password defaults to `change-me`; set `WPDOCK_MARIADB_ROOT_PASSWORD` in the
 environment or a `.env` file beside the compose file to change it before the first start — it is
-the `--root_password` you pass to `db --create-user`. `site-add` also runs `docker network create
+the `--root-password` you pass to `db --create-user`. `site-add` also runs `docker network create
 wpdock` itself if the network is somehow missing.
 
 A site's files are written by its container as `root`/`www-data`, which the `wpdock` binary —
@@ -116,7 +119,7 @@ Creates and starts a site's container, then routes its domain to it.
 | `--type` | yes | `wordpress` or `php`, and nothing else. |
 | `--wp-version` | wordpress | The WordPress version, e.g. `6.8`. Required for `wordpress`, ignored for `php`. |
 | `--php-version` | yes | The PHP version, e.g. `8.3`. |
-| `--memory` | no | Memory cap, in Docker's units. Default `256m`. |
+| `--memory` | no | Memory cap, in Docker's units. Default `512m`. |
 | `--cpu` | no | CPU quota. Default `0.5` (half a core). |
 | `--pids` | no | Cap on processes in the container. Default `100`. |
 | `--db-host` | wordpress | The database host, usually the shared `wpdock-mariadb-11` container. |
@@ -142,11 +145,67 @@ and survive the container being replaced by `site-update` or `site-restore`.
 it with `site-nuke`, first.
 
 ```sh
-./main db --create-user --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --root_password=change-me
+./main db --create-user --db-container=wpdock-mariadb-11 --db-name=blog --db-user=blog --db-password=change-me --root-password=change-me
 ./main site-add --prefix=~/wpdock --name=blog --domain=blog.test \
   --type=wordpress --wp-version=6.8 --php-version=8.3 \
   --memory=512m --cpu=1.0 --pids=256 \
   --db-host=wpdock-mariadb-11 --db-name=blog --db-user=blog --db-password=change-me
+```
+
+### ssl
+
+Puts a site on https with a Let's Encrypt certificate.
+
+```sh
+./main ssl --prefix=<path> --name=<site> --email=<address> [--staging]
+./main ssl --prefix=<path> --renew
+```
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--prefix` | no | The directory `install` created (default: the current directory). |
+| `--name` | to issue | The site to certify. It must already exist. |
+| `--email` | to issue | The address Let's Encrypt registers and sends expiry notices to. |
+| `--staging` | no | Use the Let's Encrypt staging environment, which issues untrusted test certificates without burning rate limits. |
+| `--renew` | to renew | Renew every certificate that is due, instead of issuing one. |
+
+It proves the domain with certbot's webroot challenge, run in a throwaway `certbot/certbot`
+container: nginx serves `/.well-known/acme-challenge/` for the site out of `<prefix>/www`,
+certbot writes the challenge file there, and Let's Encrypt fetches it over plain http. So the
+site's `--domain` and every `--aliases` entry must publicly resolve to this server, and port 80
+must be reachable — which rules out local-only domains like `blog.test`. The certificate covers
+the domain and all aliases, and lands under `<prefix>/certs`, which certbot sees as its
+`/etc/letsencrypt`.
+
+With the certificate on disk, the vhost is rewritten from `site-ssl.conf.tmpl` — http answers
+renewal challenges and redirects everything else to https, which proxies to the container the
+way the plain vhost did — and nginx reloads. The official WordPress image already trusts the
+`X-Forwarded-Proto` header the vhost sends, so WordPress knows it is behind https and needs no
+configuration.
+
+The certificate on disk **is** the site's ssl state: nothing is written to the container's
+labels. `site-update` and `site-restore` render whichever vhost matches what is in
+`<prefix>/certs` at the time, so https survives both; `site-nuke` deletes the site's
+certificate along with everything else, so `--renew` never chases a domain that no longer
+routes here.
+
+Certificates last 90 days. Renewal is one command, so put it in cron:
+
+```sh
+0 3 * * * cd <prefix> && /path/to/main ssl --renew
+```
+
+`certbot renew` only touches certificates inside their renewal window, so running it daily is
+what certbot itself recommends. The nginx reload after it is what picks a renewed certificate
+up.
+
+On an install that predates ssl, the compose file does not publish port 443. `ssl` checks for
+that and refuses with the fix spelled out: rerun `install --force` to regenerate
+`docker-compose.yml` (and add `site-ssl.conf.tmpl`), then `docker compose -f
+<prefix>/docker-compose.yml up -d` to recreate the proxy with the port.
+
+```sh
+./main ssl --prefix=~/wpdock --name=blog --email=you@example.com
 ```
 
 ### site-update
@@ -289,8 +348,9 @@ Deletes a site's container, its files and its database.
 
 It prints what it is about to delete and asks first, like `install` and `db --truncate`.
 `--yes` skips the prompt. It removes the container, deletes `<prefix>/data/<name>`, removes the
-vhost and reloads nginx, and then drops the database — connecting as the site's own
-`--db-user`, so it drops only that database and cannot touch any other on the shared server.
+vhost and reloads nginx, deletes the site's Let's Encrypt certificate if it has one, and then
+drops the database — connecting as the site's own `--db-user`, so it drops only that database
+and cannot touch any other on the shared server.
 
 ```sh
 ./main site-nuke --prefix=~/wpdock --name=blog
@@ -383,18 +443,18 @@ fails if no user has that ID.
 
 Talks to a MariaDB container. It runs one operation per invocation, and the operation is
 named by a flag: `--create-user`, `--import` or `--truncate`. Passing two of them is an
-error rather than a guess. All three act on the database `--db_name` inside the container
-`--db_container`, and none of them read a site's settings, so `db` can be pointed at a
+error rather than a guess. All three act on the database `--db-name` inside the container
+`--db-container`, and none of them read a site's settings, so `db` can be pointed at a
 database that no site owns yet.
 
 A site is usually set up, and then reset, like this:
 
 ```sh
-./main db --create-user --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --root_password=change-me
-./main db --import      --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --sql_file=./blog.sql
+./main db --create-user --db-container=wpdock-mariadb-11 --db-name=blog --db-user=blog --db-password=change-me --root-password=change-me
+./main db --import      --db-container=wpdock-mariadb-11 --db-name=blog --db-user=blog --db-password=change-me --sql-file=./blog.sql
 
-./main db --truncate    --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --yes
-./main db --import      --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --sql_file=./blog.sql
+./main db --truncate    --db-container=wpdock-mariadb-11 --db-name=blog --db-user=blog --db-password=change-me --yes
+./main db --import      --db-container=wpdock-mariadb-11 --db-name=blog --db-user=blog --db-password=change-me --sql-file=./blog.sql
 ```
 
 #### db --create-user
@@ -402,20 +462,20 @@ A site is usually set up, and then reset, like this:
 Creates a MariaDB user that can reach one database and nothing else.
 
 ```sh
-./main db --create-user --db_container=<name> --db_name=<db> --db_user=<user> --db_password=<pass> --root_password=<pass>
+./main db --create-user --db-container=<name> --db-name=<db> --db-user=<user> --db-password=<pass> --root-password=<pass>
 ```
 
 | Flag | Required | Description |
 | --- | --- | --- |
 | `--create-user` | yes | The operation to run. |
-| `--db_container` | yes | The running MariaDB container to run the statements in, e.g. `wpdock-mariadb-11`. |
-| `--db_name` | yes | The database the user is given access to. Created if it does not exist. |
-| `--db_user` | yes | The user to create. |
-| `--db_password` | yes | The password to give the user. |
-| `--root_password` | yes | The password of the container's MariaDB `root` user, which is what creates them. |
+| `--db-container` | yes | The running MariaDB container to run the statements in, e.g. `wpdock-mariadb-11`. |
+| `--db-name` | yes | The database the user is given access to. Created if it does not exist. |
+| `--db-user` | yes | The user to create. |
+| `--db-password` | yes | The password to give the user. |
+| `--root-password` | yes | The password of the container's MariaDB `root` user, which is what creates them. |
 
-`--db_name` and `--db_user` may hold only letters, digits and underscores, and are
-capped at MariaDB's own limits of 64 and 80 characters. `--db_password` is free-form;
+`--db-name` and `--db-user` may hold only letters, digits and underscores, and are
+capped at MariaDB's own limits of 64 and 80 characters. `--db-password` is free-form;
 quotes and backslashes in it are escaped, so it does not need quoting beyond whatever
 your shell wants.
 
@@ -425,7 +485,7 @@ created as `<user>@'%'`, because the client is another container rather than loc
 The database is created `utf8mb4` / `utf8mb4_unicode_ci`.
 
 ```sh
-./main db --create-user --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --root_password=change-me
+./main db --create-user --db-container=wpdock-mariadb-11 --db-name=blog --db-user=blog --db-password=change-me --root-password=change-me
 ```
 
 ```
@@ -437,11 +497,11 @@ db wpdock-mariadb-11
 ```
 
 Rerunning it is safe. The database and the user are only created if missing, and the
-password is reset on every run, so a second run with a different `--db_password` rotates
+password is reset on every run, so a second run with a different `--db-password` rotates
 it and leaves the data alone.
 
 Creating a user is a `root` job, so this operation connects as `root` over the container's
-own socket with `--root_password`. That is the `MARIADB_ROOT_PASSWORD` the container was
+own socket with `--root-password`. That is the `MARIADB_ROOT_PASSWORD` the container was
 started with. wpdock never stores it: a root password is the one secret in the stack that
 nothing but this operation needs, so it stays off every site's labels and is passed on the
 command line, once, when a user is created.
@@ -451,31 +511,31 @@ command line, once, when a user is created.
 Loads a SQL file into one database.
 
 ```sh
-./main db --import --db_container=<name> --db_name=<db> --db_user=<user> --db_password=<pass> --sql_file=<path>
+./main db --import --db-container=<name> --db-name=<db> --db-user=<user> --db-password=<pass> --sql-file=<path>
 ```
 
 | Flag | Required | Description |
 | --- | --- | --- |
 | `--import` | yes | The operation to run. |
-| `--db_container` | yes | The running MariaDB container to load the file into. |
-| `--db_name` | yes | The database to load it into. It must already exist: `--import` does not create it. |
-| `--db_user` | yes | The user to connect as. Usually the one `--create-user` made for `--db_name`. |
-| `--db_password` | yes | That user's password. |
-| `--sql_file` | yes | The SQL file to load, on the host. It is streamed in, so a large dump is not read into memory. |
+| `--db-container` | yes | The running MariaDB container to load the file into. |
+| `--db-name` | yes | The database to load it into. It must already exist: `--import` does not create it. |
+| `--db-user` | yes | The user to connect as. Usually the one `--create-user` made for `--db-name`. |
+| `--db-password` | yes | That user's password. |
+| `--sql-file` | yes | The SQL file to load, on the host. It is streamed in, so a large dump is not read into memory. |
 
-There is no `--root_password` here, and that is the point. The import runs as `--db_user`,
-which holds privileges on `--db_name` and nowhere else, so MariaDB itself is what stops a
+There is no `--root-password` here, and that is the point. The import runs as `--db-user`,
+which holds privileges on `--db-name` and nowhere else, so MariaDB itself is what stops a
 dump from reaching another database. A file carrying `DROP TABLE secrets.crown` fails with
 `ERROR 1142 ... DROP command denied` rather than being obeyed. Importing as `root` would
 have run it.
 
-`--db_name` becomes the default database, so a dump that is a bare list of `CREATE TABLE`
+`--db-name` becomes the default database, so a dump that is a bare list of `CREATE TABLE`
 and `INSERT` statements — what `mysqldump <db>` writes, with no `USE` line — lands in the
 right place. A dump that names databases itself (`mysqldump --databases`, or one with `USE`
-lines) will only work if it names `--db_name`, since the user may not touch any other.
+lines) will only work if it names `--db-name`, since the user may not touch any other.
 
 ```sh
-./main db --import --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --sql_file=./blog.sql
+./main db --import --db-container=wpdock-mariadb-11 --db-name=blog --db-user=blog --db-password=change-me --sql-file=./blog.sql
 ```
 
 ```
@@ -504,19 +564,19 @@ reload cleanly. `--truncate` is the way to reload one that does not.
 Empties a database so that it can be imported into again.
 
 ```sh
-./main db --truncate --db_container=<name> --db_name=<db> --db_user=<user> --db_password=<pass> [--yes]
+./main db --truncate --db-container=<name> --db-name=<db> --db-user=<user> --db-password=<pass> [--yes]
 ```
 
 | Flag | Required | Description |
 | --- | --- | --- |
 | `--truncate` | yes | The operation to run. |
-| `--db_container` | yes | The running MariaDB container. |
-| `--db_name` | yes | The database to empty. It is emptied, not dropped. |
-| `--db_user` | yes | The user to connect as, the same one `--import` uses. |
-| `--db_password` | yes | That user's password. |
+| `--db-container` | yes | The running MariaDB container. |
+| `--db-name` | yes | The database to empty. It is emptied, not dropped. |
+| `--db-user` | yes | The user to connect as, the same one `--import` uses. |
+| `--db-password` | yes | That user's password. |
 | `--yes` | no | Skip the confirmation prompt. |
 
-It **drops** every table and view in `--db_name`. It does not run SQL's `TRUNCATE`, which
+It **drops** every table and view in `--db-name`. It does not run SQL's `TRUNCATE`, which
 only deletes rows and leaves the tables standing — that would not help, because the
 `CREATE TABLE` statements in a dump would still fail with `Table 'posts' already exists` on
 the way back in. Dropping the tables is what makes a plain `mysqldump` reload cleanly.
@@ -526,7 +586,7 @@ not need running again. Foreign keys are no obstacle: the drop runs with
 `FOREIGN_KEY_CHECKS = 0`, so tables that reference each other come out whatever order they
 are in.
 
-Like `--import`, it connects as `--db_user` and so can only reach that user's own database.
+Like `--import`, it connects as `--db-user` and so can only reach that user's own database.
 Pointing it at one the user does not hold is refused by MariaDB with
 `ERROR 1044 ... Access denied` rather than obeyed.
 
@@ -592,6 +652,7 @@ src/
     site/
       site.go           the shared core: flags, docker exec, labels, images, vhosts, backups
       add.go            site-add: runs the container, writes the vhost, reloads nginx
+      ssl.go            ssl: obtains a Let's Encrypt certificate and switches the vhost to https
       update.go         site-update: reads the labels back, applies changes, recreates
       list.go           site-list: tabulates every wpdock.managed container
       details.go        site-details: prints one site's labels, image and state

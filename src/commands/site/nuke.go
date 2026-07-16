@@ -44,6 +44,9 @@ func nuke(args []string) error {
 	if c.DBName != "" {
 		field("database", fmt.Sprintf("%s@%s", c.DBName, c.DBHost))
 	}
+	if hasCert(root, c.Domain) {
+		field("certificate", certLive(root, c.Domain))
+	}
 	fmt.Println()
 
 	if !*yes {
@@ -67,6 +70,13 @@ func nuke(args []string) error {
 	}
 	if err := removeData(root, name); err != nil {
 		return err
+	}
+	// Drop the certificate too, or `ssl --renew` would keep trying to renew
+	// a domain that no longer routes here and fail on every run.
+	if hasCert(root, c.Domain) {
+		if err := certbot(root, "delete", "--cert-name", c.Domain, "--non-interactive"); err != nil {
+			return err
+		}
 	}
 	if c.DBName != "" {
 		if err := db.DropDatabase(c.DBHost, c.DBName, c.DBUser, c.DBPass); err != nil {

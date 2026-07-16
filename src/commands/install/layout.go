@@ -16,6 +16,7 @@ var assets embed.FS
 var dirs = []string{
 	"data",
 	"backups",
+	"certs",
 	"nginx",
 	"nginx/conf",
 	"nginx/conf.d",
@@ -37,6 +38,7 @@ var files = []file{
 	{path: "nginx/nginx.conf", asset: "assets/nginx.conf", render: true},
 	{path: "nginx/conf.d/security.conf", asset: "assets/conf.d/security.conf"},
 	{path: "nginx/templates/site.conf.tmpl", asset: "assets/templates/site.conf.tmpl"},
+	{path: "nginx/templates/site-ssl.conf.tmpl", asset: "assets/templates/site-ssl.conf.tmpl"},
 	{path: "www/index.html", asset: "assets/www/index.html", render: true},
 }
 

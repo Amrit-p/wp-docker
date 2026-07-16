@@ -17,6 +17,13 @@ server {
 
     include {{.Prefix}}/nginx/conf.d/security.conf;
 
+    # certbot's webroot challenges land in the shared webroot, so `wpdock ssl`
+    # can prove the domain while the site is still plain http. `^~` wins over
+    # the regex deny of dotfiles in security.conf.
+    location ^~ /.well-known/acme-challenge/ {
+        root  {{.Prefix}}/www;
+    }
+
     location / {
         proxy_pass         http://{{.Upstream}};
         proxy_set_header   Host              $host;

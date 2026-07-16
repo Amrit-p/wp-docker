@@ -22,6 +22,9 @@ const (
 	namePrefix  = "wpdock-"
 	labelPrefix = "wpdock."
 	helperImage = "busybox"
+
+	certbotImage = "certbot/certbot"
+	sslTemplate  = "site-ssl.conf.tmpl"
 )
 
 type Config struct {
@@ -60,7 +63,7 @@ func options(name string) *opts {
 	fs.StringVar(&cfg.Type, "type", "", "wordpress or php")
 	fs.StringVar(&cfg.Version, "wp-version", "", "wordpress version, e.g. 6.8 (wordpress only)")
 	fs.StringVar(&cfg.PHP, "php-version", "", "php version, e.g. 8.3")
-	fs.StringVar(&cfg.Memory, "memory", "256m", "memory cap (default 256m)")
+	fs.StringVar(&cfg.Memory, "memory", "512m", "memory cap (default 512m)")
 	fs.StringVar(&cfg.CPU, "cpu", "0.5", "cpu quota (default 0.5)")
 	fs.StringVar(&cfg.PIDs, "pids", "100", "cap on processes in the container (default 100)")
 	fs.StringVar(&cfg.DBHost, "db-host", "", "shared mariadb container the site connects to")
@@ -233,6 +236,7 @@ exec docker-php-entrypoint "$@"
 
 func container(name string) string           { return namePrefix + name }
 func dataDir(root, name string) string       { return filepath.Join(root, "data", name) }
+func certLive(root, domain string) string    { return filepath.Join(root, "certs", "live", domain) }
 func vhostPath(root, name string) string     { return filepath.Join(root, "nginx", "conf", name+".conf") }
 func backupPath(root, id, ext string) string { return filepath.Join(root, "backups", id+ext) }
 
@@ -456,12 +460,27 @@ func serverName(c *Config) string {
 type vhost struct {
 	Name       string
 	ServerName string
+	Domain     string
 	Upstream   string
 	Prefix     string
 }
 
+// hasCert reports whether the site's domain holds a certificate. The check is
+// certbot's own renewal config rather than live/<domain>/, because certbot
+// keeps live/ root-only while renewal/ stays readable to the user running
+// wpdock. The certificate on disk is the whole of a site's ssl state: no
+// label or flag records it, so update and restore keep https automatically.
+func hasCert(root, domain string) bool {
+	return exists(filepath.Join(root, "certs", "renewal", domain+".conf"))
+}
+
 func writeVhost(root string, c *Config) error {
-	b, err := os.ReadFile(filepath.Join(root, "nginx", "templates", "site.conf.tmpl"))
+	tmpl := "site.conf.tmpl"
+	if hasCert(root, c.Domain) {
+		tmpl = sslTemplate
+	}
+
+	b, err := os.ReadFile(filepath.Join(root, "nginx", "templates", tmpl))
 	if err != nil {
 		return err
 	}
@@ -475,6 +494,7 @@ func writeVhost(root string, c *Config) error {
 	if err := t.Execute(&buf, vhost{
 		Name:       c.Name,
 		ServerName: serverName(c),
+		Domain:     c.Domain,
 		Upstream:   container(c.Name),
 		Prefix:     root,
 	}); err != nil {

@@ -8,7 +8,7 @@
 # Service and container names carry the image version, so upgrading is a new name you can
 # stand up beside the old one. `site-add` finds the proxy by its `wpdock.role=proxy` label,
 # not its name, so the nginx version can change freely. MariaDB is reached by the name you
-# pass to `db --create-user --db_container=...` and `site-add --db-host=...`.
+# pass to `db --create-user --db-container=...` and `site-add --db-host=...`.
 #
 # The MariaDB root password defaults to "change-me"; override it before first start with
 # WPDOCK_MARIADB_ROOT_PASSWORD in your environment or a .env file next to this one.
@@ -22,6 +22,7 @@ services:
       wpdock.role: proxy
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - {{.Root}}:{{.Root}}
     command: ["nginx", "-c", "{{.Root}}/nginx/nginx.conf", "-g", "daemon off;"]

@@ -6,27 +6,27 @@ import (
 )
 
 func importSQL(container, name, user, password, path string) error {
-	if err := checkIdent("--db_name", name, 64); err != nil {
+	if err := checkIdent("--db-name", name, 64); err != nil {
 		return err
 	}
-	if err := checkIdent("--db_user", user, 80); err != nil {
+	if err := checkIdent("--db-user", user, 80); err != nil {
 		return err
 	}
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("--sql_file: %v", err)
+		return fmt.Errorf("--sql-file: %v", err)
 	}
 	if info.IsDir() {
-		return fmt.Errorf("--sql_file: %s: is a directory", path)
+		return fmt.Errorf("--sql-file: %s: is a directory", path)
 	}
 	if info.Size() == 0 {
-		return fmt.Errorf("--sql_file: %s: is empty", path)
+		return fmt.Errorf("--sql-file: %s: is empty", path)
 	}
 
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("--sql_file: %v", err)
+		return fmt.Errorf("--sql-file: %v", err)
 	}
 	defer f.Close()
 

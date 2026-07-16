@@ -9,11 +9,11 @@ import (
 )
 
 func Usage() {
-	fmt.Fprint(os.Stderr, `  db --create-user --db_container=<name> --db_name=<db> --db_user=<user> --db_password=<pass> --root_password=<pass>
+	fmt.Fprint(os.Stderr, `  db --create-user --db-container=<name> --db-name=<db> --db-user=<user> --db-password=<pass> --root-password=<pass>
         create a mariadb user inside <container> that may reach only <db>
-  db --import --db_container=<name> --db_name=<db> --db_user=<user> --db_password=<pass> --sql_file=<path>
+  db --import --db-container=<name> --db-name=<db> --db-user=<user> --db-password=<pass> --sql-file=<path>
         load <path> into <db>, as <user>, so it may touch nothing else
-  db --truncate --db_container=<name> --db_name=<db> --db_user=<user> --db_password=<pass> [--yes]
+  db --truncate --db-container=<name> --db-name=<db> --db-user=<user> --db-password=<pass> [--yes]
         drop every table in <db>, leaving it empty and ready to import into
 `)
 }
@@ -30,12 +30,12 @@ func Run(args []string) error {
 	create := fs.Bool("create-user", false, "create a user that may reach only one database")
 	load := fs.Bool("import", false, "load a sql file into one database")
 	empty := fs.Bool("truncate", false, "drop every table in one database")
-	container := fs.String("db_container", "", "name of the running mariadb container")
-	name := fs.String("db_name", "", "database to act on")
-	user := fs.String("db_user", "", "user to create, or to act as")
-	password := fs.String("db_password", "", "password of that user")
-	root := fs.String("root_password", "", "password of the mariadb root user, which creates the user")
-	file := fs.String("sql_file", "", "path to the sql file to import")
+	container := fs.String("db-container", "", "name of the running mariadb container")
+	name := fs.String("db-name", "", "database to act on")
+	user := fs.String("db-user", "", "user to create, or to act as")
+	password := fs.String("db-password", "", "password of that user")
+	root := fs.String("root-password", "", "password of the mariadb root user, which creates the user")
+	file := fs.String("sql-file", "", "path to the sql file to import")
 	yes := fs.Bool("yes", false, "skip the confirmation prompt --truncate asks")
 
 	if err := fs.Parse(args); err != nil {
@@ -66,11 +66,11 @@ func Run(args []string) error {
 	switch {
 	case *create:
 		if err := required([]flags{
-			{"--db_container", *container},
-			{"--db_name", *name},
-			{"--db_user", *user},
-			{"--db_password", *password},
-			{"--root_password", *root},
+			{"--db-container", *container},
+			{"--db-name", *name},
+			{"--db-user", *user},
+			{"--db-password", *password},
+			{"--root-password", *root},
 		}); err != nil {
 			return err
 		}
@@ -80,11 +80,11 @@ func Run(args []string) error {
 
 	case *load:
 		if err := required([]flags{
-			{"--db_container", *container},
-			{"--db_name", *name},
-			{"--db_user", *user},
-			{"--db_password", *password},
-			{"--sql_file", *file},
+			{"--db-container", *container},
+			{"--db-name", *name},
+			{"--db-user", *user},
+			{"--db-password", *password},
+			{"--sql-file", *file},
 		}); err != nil {
 			return err
 		}
@@ -94,10 +94,10 @@ func Run(args []string) error {
 
 	case *empty:
 		if err := required([]flags{
-			{"--db_container", *container},
-			{"--db_name", *name},
-			{"--db_user", *user},
-			{"--db_password", *password},
+			{"--db-container", *container},
+			{"--db-name", *name},
+			{"--db-user", *user},
+			{"--db-password", *password},
 		}); err != nil {
 			return err
 		}

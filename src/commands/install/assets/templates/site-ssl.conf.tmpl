@@ -1,0 +1,47 @@
+{{/*
+  Rendered into <prefix>/nginx/conf/<name>.conf instead of site.conf.tmpl once
+  `wpdock ssl` has obtained a certificate for the site's domain. http answers
+  certbot's renewal challenges and redirects everything else; https proxies to
+  the site's container the way the plain vhost does.
+
+    {{.Name}}        site name, e.g. blog
+    {{.ServerName}}  the server_name value, e.g. blog.com www.blog.com
+    {{.Domain}}      the primary domain, which names the certificate directory
+    {{.Upstream}}    the site's container, e.g. wpdock-blog
+    {{.Prefix}}      the install prefix
+*/ -}}
+# wpdock site: {{.Name}} (https)
+
+server {
+    listen       80;
+    server_name  {{.ServerName}};
+
+    # certbot proves the domain here on every renewal.
+    location ^~ /.well-known/acme-challenge/ {
+        root  {{.Prefix}}/www;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen       443 ssl;
+    http2        on;
+    server_name  {{.ServerName}};
+
+    ssl_certificate      {{.Prefix}}/certs/live/{{.Domain}}/fullchain.pem;
+    ssl_certificate_key  {{.Prefix}}/certs/live/{{.Domain}}/privkey.pem;
+    ssl_protocols        TLSv1.2 TLSv1.3;
+
+    include {{.Prefix}}/nginx/conf.d/security.conf;
+
+    location / {
+        proxy_pass         http://{{.Upstream}};
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+}

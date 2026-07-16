@@ -6,14 +6,14 @@ import (
 )
 
 func createUser(container, name, user, password, root string) error {
-	if err := checkIdent("--db_name", name, 64); err != nil {
+	if err := checkIdent("--db-name", name, 64); err != nil {
 		return err
 	}
-	if err := checkIdent("--db_user", user, 80); err != nil {
+	if err := checkIdent("--db-user", user, 80); err != nil {
 		return err
 	}
 	if strings.ContainsRune(password, 0) {
-		return fmt.Errorf("--db_password: must not contain a null byte")
+		return fmt.Errorf("--db-password: must not contain a null byte")
 	}
 
 	as := login{container: container, user: "root", password: root}

@@ -8,10 +8,10 @@ import (
 )
 
 func truncate(container, name, user, password string, yes bool) error {
-	if err := checkIdent("--db_name", name, 64); err != nil {
+	if err := checkIdent("--db-name", name, 64); err != nil {
 		return err
 	}
-	if err := checkIdent("--db_user", user, 80); err != nil {
+	if err := checkIdent("--db-user", user, 80); err != nil {
 		return err
 	}
 
