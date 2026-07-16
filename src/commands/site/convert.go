@@ -114,7 +114,8 @@ func convert(args []string) error {
 		return fmt.Errorf("%s already exists — remove it first", dataDir(root, c.Name))
 	}
 
-	img, err := c.baseImage()
+	fmt.Printf("resolving an image for wordpress %s / php %s ...\n", c.Version, c.PHP)
+	img, err := convertImage(c)
 	if err != nil {
 		return err
 	}
@@ -141,12 +142,6 @@ func convert(args []string) error {
 		if !ok {
 			return fmt.Errorf("cancelled")
 		}
-	}
-
-	// Pull before touching anything: a version pair Docker Hub never published
-	// (a backport release, a retired php variant) should cost nothing to hit.
-	if err := ensureImage(img); err != nil {
-		return fmt.Errorf("%v\n      %s may not be a published tag — pass a --wp-version/--php-version pair that exists on hub.docker.com", err, img)
 	}
 
 	if c.DBName != "" {
@@ -205,6 +200,56 @@ func convert(args []string) error {
 }
 
 func oldContainer(name string) string { return "wp_" + name }
+
+func convertImage(c *Config) (string, error) {
+	img, err := c.baseImage()
+	if err != nil {
+		return "", err
+	}
+	if c.Type != "wordpress" {
+		if err := ensureImage(img); err != nil {
+			return "", fmt.Errorf("%v — is php %s a published tag on hub.docker.com/_/php?", err, c.PHP)
+		}
+		return img, nil
+	}
+
+	versions := []string{c.Version}
+	if mm := majorMinor(c.Version); mm != "" {
+		versions = append(versions, mm)
+	}
+	var tried []string
+	for _, v := range versions {
+		tag := fmt.Sprintf("wordpress:%s-php%s-apache", v, c.PHP)
+		if ensureImage(tag) == nil {
+			c.Version = v
+			return tag, nil
+		}
+		tried = append(tried, tag)
+	}
+	tag := fmt.Sprintf("wordpress:php%s-apache", c.PHP)
+	if ensureImage(tag) == nil {
+		if v, err := imageWPVersion(tag); err == nil && v != "" {
+			c.Version = v
+		}
+		return tag, nil
+	}
+	tried = append(tried, tag)
+	return "", fmt.Errorf("no published wordpress image for %s on php %s (tried %s) — pass --wp-version/--php-version from hub.docker.com/_/wordpress", c.Version, c.PHP, strings.Join(tried, ", "))
+}
+
+func majorMinor(v string) string {
+	last := strings.LastIndexByte(v, '.')
+	if last <= 0 || strings.IndexByte(v, '.') == last {
+		return ""
+	}
+	return v[:last]
+}
+
+func imageWPVersion(img string) (string, error) {
+	out, err := dockerOut("run", "--rm", img, "php", "-r",
+		`include "/usr/src/wordpress/wp-includes/version.php"; echo $wp_version;`)
+	return strings.TrimSpace(out), err
+}
 
 // inspectOldSite reads the old container's labels, env and limits into a
 // wpdock Config, and returns the old image and database container with it.

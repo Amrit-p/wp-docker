@@ -256,7 +256,19 @@ The old container is the source of truth, the way a wpdock container is: domain 
 from its `wp.*` labels, the database name, user and password from its environment, and both
 versions from executing `php` inside it — which is why it must be running (or both
 `--*-version` flags given). Resource limits are the one thing not carried over: the new
-container gets wpdock's defaults (or the flags above), not the old caps. It prints the whole plan — old and new
+container gets wpdock's defaults (or the flags above), not the old caps.
+
+Docker Hub never built an image for every version pair a site can report — security backports
+like WordPress 6.1.10 have no image at all, and `php7.4` variants stopped being published in
+2023. So convert resolves the detected pair to a tag that exists, pulling it as the proof:
+first `wordpress:<wp>-php<php>-apache` exactly, then the `<major.minor>` tag
+(`wordpress:6.1-php7.4-apache`), then the bare `wordpress:php<php>-apache` variant. Falling
+back is safe because the image's bundled WordPress is never used — the entrypoint only unpacks
+it into an *empty* docroot, and the old site's files are copied in first; the image supplies
+PHP, Apache and the extensions, nothing more. The site's `wpdock.version` label follows
+whichever tag won (for the bare variant, the version bundled in that image), so `site-update`
+later regenerates a tag that also exists. Only if the whole ladder misses does convert stop —
+before touching the database or files — and ask for explicit `--wp-version`/`--php-version`. It prints the whole plan — old and new
 container and image, files, database move — plus warnings, and asks before doing anything.
 
 Then it: dumps the old database (as the site's own user, from whichever MariaDB server the old
