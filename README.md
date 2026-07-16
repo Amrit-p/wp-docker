@@ -247,12 +247,16 @@ of) into wpdock: its files, its database and its routing.
 | `--aliases` | no | Override the aliases read back from the old vhost's `# Aliases:` header (comma-separated). |
 | `--wp-version` | no | Override the WordPress version, otherwise read from the running old container's `wp-includes/version.php`. |
 | `--php-version` | no | Override the PHP version, otherwise read from the running old container's `php -r`. |
+| `--memory` | no | Memory cap of the new container. Default `512m` — the old container's limits are not carried over. |
+| `--cpu` | no | CPU quota of the new container. Default `0.5`. |
+| `--pids` | no | Process cap of the new container. Default `100`. |
 | `--yes` | no | Skip the confirmation prompt. |
 
 The old container is the source of truth, the way a wpdock container is: domain and type come
-from its `wp.*` labels, the database name, user and password from its environment, the resource
-caps from its `HostConfig`, and both versions from executing `php` inside it — which is why it
-must be running (or both `--*-version` flags given). It prints the whole plan — old and new
+from its `wp.*` labels, the database name, user and password from its environment, and both
+versions from executing `php` inside it — which is why it must be running (or both
+`--*-version` flags given). Resource limits are the one thing not carried over: the new
+container gets wpdock's defaults (or the flags above), not the old caps. It prints the whole plan — old and new
 container and image, files, database move — plus warnings, and asks before doing anything.
 
 Then it: dumps the old database (as the site's own user, from whichever MariaDB server the old

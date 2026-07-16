@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"wpdock/src/commands/db"
@@ -37,6 +36,9 @@ func convert(args []string) error {
 	typ := fs.String("type", "", "override the wp.type read from the old container (wp or php)")
 	domain := fs.String("domain", "", "override the domain read from the old container's wp.domain label")
 	aliases := fs.String("aliases", "", "override the aliases read back from the old vhost (comma-separated)")
+	mem := fs.String("memory", "512m", "memory cap of the new container (default 512m)")
+	cpu := fs.String("cpu", "0.5", "cpu quota of the new container (default 0.5)")
+	pids := fs.String("pids", "100", "cap on processes in the new container (default 100)")
 	wpVer := fs.String("wp-version", "", "override the wordpress version detected from the old container")
 	phpVer := fs.String("php-version", "", "override the php version detected from the old container")
 	yes := fs.Bool("yes", false, "skip the confirmation prompt")
@@ -68,6 +70,9 @@ func convert(args []string) error {
 		return err
 	}
 	c.DBHost = *dbHost
+	c.Memory = *mem
+	c.CPU = *cpu
+	c.PIDs = *pids
 	if *domain != "" {
 		c.Domain = *domain
 	}
@@ -217,22 +222,11 @@ func inspectOldSite(oldRoot, name, typeOverride string) (*Config, string, string
 	if err := inspectContainer(old, "{{json .Config.Env}}", &env); err != nil {
 		return nil, "", "", err
 	}
-	var hc struct {
-		Memory    int64
-		NanoCpus  int64
-		PidsLimit *int64
-	}
-	if err := inspectContainer(old, "{{json .HostConfig}}", &hc); err != nil {
-		return nil, "", "", err
-	}
 
 	c := &Config{
 		Name:    name,
 		Domain:  labels["wp.domain"],
 		Aliases: oldAliases(oldRoot, name),
-		Memory:  memoryFlag(hc.Memory),
-		CPU:     cpuFlag(hc.NanoCpus),
-		PIDs:    pidsFlag(hc.PidsLimit),
 	}
 
 	// The old stack's env names differ by type: WORDPRESS_DB_* for wp sites,
@@ -320,31 +314,6 @@ func detectWPVersion(old string) (string, error) {
 		return "", fmt.Errorf("detecting the wordpress version: %v (is the old container running? --wp-version skips detection)", err)
 	}
 	return strings.TrimSpace(out), nil
-}
-
-func memoryFlag(b int64) string {
-	if b <= 0 {
-		return ""
-	}
-	const mib = 1024 * 1024
-	if b%mib == 0 {
-		return strconv.FormatInt(b/mib, 10) + "m"
-	}
-	return strconv.FormatInt(b, 10)
-}
-
-func cpuFlag(nano int64) string {
-	if nano <= 0 {
-		return ""
-	}
-	return strconv.FormatFloat(float64(nano)/1e9, 'f', -1, 64)
-}
-
-func pidsFlag(p *int64) string {
-	if p == nil || *p <= 0 {
-		return ""
-	}
-	return strconv.FormatInt(*p, 10)
 }
 
 func warnConvert(c *Config) {
