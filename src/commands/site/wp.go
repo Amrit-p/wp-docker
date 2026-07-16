@@ -38,10 +38,20 @@ foreach ($rows as $r) { echo implode("\t", $r), "\n"; }`
 const wpResetPHP = `error_reporting(0);
 require "/var/www/html/wp-load.php";
 $id = (int) getenv("WP_UID");
-$u = get_user_by("id", $id);
-if (!$u) { fwrite(STDERR, "no user with ID " . $id); exit(1); }
-wp_set_password(getenv("WP_PW"), $id);
-echo $u->user_login;`
+$login = getenv("WP_LOGIN");
+if ($id) {
+	$u = get_user_by("id", $id);
+	if (!$u) { fwrite(STDERR, "no user with ID " . $id); exit(1); }
+} elseif ($login) {
+	$u = get_user_by("login", $login);
+	if (!$u) { fwrite(STDERR, "no user with login " . $login); exit(1); }
+} else {
+	$us = get_users(array("role" => "administrator", "orderby" => "ID", "order" => "ASC", "number" => 1));
+	if (!$us) { fwrite(STDERR, "no administrator found"); exit(1); }
+	$u = $us[0];
+}
+wp_set_password(getenv("WP_PW"), $u->ID);
+echo $u->ID, "\t", $u->user_login;`
 
 func WPListUsersUsage() {
 	fmt.Fprint(os.Stderr, `  site-wp-list-users [--prefix=<path>] --name=<site>
@@ -84,8 +94,8 @@ func wpListUsers(args []string) error {
 }
 
 func WPResetPasswordUsage() {
-	fmt.Fprint(os.Stderr, `  site-wp-reset-password [--prefix=<path>] --name=<site> --userID=<id> --password=<pass>
-        set a WordPress user's password by their wp_users ID
+	fmt.Fprint(os.Stderr, `  site-wp-reset-password [--prefix=<path>] --name=<site> [--userID=<id> | --user=<login>] --password=<pass>
+        set a WordPress user's password (default: the first administrator)
 `)
 }
 
@@ -96,7 +106,8 @@ func WPResetPassword(args []string) error {
 func wpResetPassword(args []string) error {
 	fs := flag.NewFlagSet("site-wp-reset-password", flag.ContinueOnError)
 	name := fs.String("name", "", "site name")
-	userID := fs.String("userID", "", "the wp_users ID to reset")
+	userID := fs.String("userID", "", "the wp_users ID to reset (default: the first administrator)")
+	user := fs.String("user", "", "the user_login to reset, instead of --userID")
 	password := fs.String("password", "", "the new password")
 	fs.String("prefix", "", "installation directory (accepted for consistency; not used)")
 	fs.Usage = WPResetPasswordUsage
@@ -107,8 +118,13 @@ func wpResetPassword(args []string) error {
 	if err := (&Config{Name: *name}).checkName(); err != nil {
 		return err
 	}
-	if _, err := strconv.Atoi(*userID); err != nil {
-		return fmt.Errorf("--userID is required and must be a number")
+	if *userID != "" && *user != "" {
+		return fmt.Errorf("--userID and --user name the same thing, so pass one of them")
+	}
+	if *userID != "" {
+		if _, err := strconv.Atoi(*userID); err != nil {
+			return fmt.Errorf("--userID must be a number")
+		}
 	}
 	if *password == "" {
 		return fmt.Errorf("--password is required")
@@ -118,12 +134,13 @@ func wpResetPassword(args []string) error {
 		return err
 	}
 
-	env := append(dbEnvPairs(c), "WP_UID="+*userID, "WP_PW="+*password)
-	login, err := wpExec(*name, env, wpResetPHP)
+	env := append(dbEnvPairs(c), "WP_UID="+*userID, "WP_LOGIN="+*user, "WP_PW="+*password)
+	out, err := wpExec(*name, env, wpResetPHP)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("reset password for user %s (ID %s) on %s\n", strings.TrimSpace(login), *userID, *name)
+	id, login, _ := strings.Cut(strings.TrimSpace(out), "\t")
+	fmt.Printf("reset password for user %s (ID %s) on %s\n", login, id, *name)
 	return nil
 }

@@ -35,6 +35,8 @@ type file struct {
 
 var files = []file{
 	{path: "docker-compose.yml", asset: "assets/docker-compose.yml", render: true},
+	{path: ".env.example", asset: "assets/env.example"},
+	{path: ".env", asset: "assets/env.example", keep: true},
 	{path: "nginx/nginx.conf", asset: "assets/nginx.conf", render: true},
 	{path: "nginx/conf.d/security.conf", asset: "assets/conf.d/security.conf"},
 	{path: "nginx/templates/site.conf.tmpl", asset: "assets/templates/site.conf.tmpl"},

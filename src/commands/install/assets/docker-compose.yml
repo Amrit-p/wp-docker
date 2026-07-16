@@ -10,8 +10,10 @@
 # not its name, so the nginx version can change freely. MariaDB is reached by the name you
 # pass to `db --create-user --db-container=...` and `site-add --db-host=...`.
 #
-# The MariaDB root password defaults to "change-me"; override it before first start with
-# WPDOCK_MARIADB_ROOT_PASSWORD in your environment or a .env file next to this one.
+# The ${...} values below are read from the .env file next to this file (docker compose
+# loads it automatically). `wpdock install` writes a .env from .env.example on first run;
+# edit it before first start. WPDOCK_MARIADB_PORT publishes MariaDB on the host at
+# 127.0.0.1:<port> (default 3307, so an old stack's MariaDB can keep 3306).
 
 services:
   wpdock-nginx-1.27:
@@ -21,8 +23,8 @@ services:
     labels:
       wpdock.role: proxy
     ports:
-      - "80:80"
-      - "443:443"
+      - "${WPDOCK_HTTP_PORT:-80}:80"
+      - "${WPDOCK_HTTPS_PORT:-443}:443"
     volumes:
       - {{.Root}}:{{.Root}}
     command: ["nginx", "-c", "{{.Root}}/nginx/nginx.conf", "-g", "daemon off;"]
@@ -35,6 +37,8 @@ services:
     restart: unless-stopped
     environment:
       MARIADB_ROOT_PASSWORD: ${WPDOCK_MARIADB_ROOT_PASSWORD:-change-me}
+    ports:
+      - "127.0.0.1:${WPDOCK_MARIADB_PORT:-3307}:3306"
     volumes:
       - wpdock-mariadb-data:/var/lib/mysql
     networks:

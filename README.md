@@ -53,6 +53,8 @@ safe: without `--force` every file that already exists is skipped.
 ```
 <prefix>/
   docker-compose.yml             the shared nginx + mariadb services, on the wpdock network
+  .env                           the values docker-compose.yml and the Makefile read; created once, never rewritten
+  .env.example                   the reference copy of .env, kept current by --force
   data/                          per-site docroots: data/<site-name>/, bind-mounted in
   backups/                       site-backup writes the .tgz and .json here
   certs/                         Let's Encrypt state, mounted into certbot as /etc/letsencrypt
@@ -70,8 +72,9 @@ safe: without `--force` every file that already exists is skipped.
 ```
 
 Everything here is regenerated from the binary, so `--force` overwrites local edits to
-`nginx.conf`, `security.conf` or the templates. `data/`, `backups/` and `certs/` hold your
-sites and are only ever added to, never rewritten.
+`nginx.conf`, `security.conf`, the templates or `.env.example`. `data/`, `backups/` and
+`certs/` hold your sites, and `.env` holds your settings — those are only ever added to,
+never rewritten.
 
 ## Shared containers
 
@@ -89,10 +92,24 @@ Bring them up once, from anywhere:
 docker compose -f <prefix>/docker-compose.yml up -d
 ```
 
-The MariaDB root password defaults to `change-me`; set `WPDOCK_MARIADB_ROOT_PASSWORD` in the
-environment or a `.env` file beside the compose file to change it before the first start — it is
-the `--root-password` you pass to `db --create-user`. `site-add` also runs `docker network create
-wpdock` itself if the network is somehow missing.
+The compose file reads its settings from the `.env` beside it, which `install` creates from
+`.env.example` the first time (docker compose loads a `.env` next to the compose file
+automatically, wherever you run it from):
+
+| Variable | Default | What it sets |
+| --- | --- | --- |
+| `WPDOCK_MARIADB_ROOT_PASSWORD` | `change-me` | MariaDB's root password — the `--root-password` you pass to `db --create-user` and `site-convert`. Change it before the first start. |
+| `WPDOCK_MARIADB_PORT` | `3307` | The host port MariaDB is published on, bound to `127.0.0.1` only. It exists for host-side clients (`mysql -h 127.0.0.1 -P 3307`); sites reach MariaDB over the `wpdock` network and never use it. It defaults to 3307 so an old stack's MariaDB can keep 3306 while both run during a migration. |
+| `WPDOCK_HTTP_PORT` | `80` | The host port the nginx proxy serves http on. |
+| `WPDOCK_HTTPS_PORT` | `443` | The host port the nginx proxy serves https on. `ssl` expects the proxy on 443. |
+| `WPDOCK_PHP_VERSION` | `8.3` | Only read by the Makefile: the `--php-version` `make add-site` uses when `PHP_VERSION=` is not given. |
+| `WPDOCK_WP_VERSION` | `6.8` | Only read by the Makefile: the `--wp-version` `make add-site` uses when `WP_VERSION=` is not given. |
+| `WPDOCK_LETSENCRYPT_EMAIL` | empty | Only read by the Makefile: the `--email` `make ssl` uses when `EMAIL=` is not given. |
+
+Changing a port or the root password takes effect on the next
+`docker compose -f <prefix>/docker-compose.yml up -d` (the root password only initializes a
+fresh data volume — MariaDB keeps the password it was first started with). `site-add` also runs
+`docker network create wpdock` itself if the network is somehow missing.
 
 A site's files are written by its container as `root`/`www-data`, which the `wpdock` binary —
 running as you — cannot archive, replace or delete. So `site-backup`, `site-restore` and
@@ -509,26 +526,33 @@ ID  LOGIN   EMAIL               REGISTERED           NAME
 
 ### site-wp-reset-password
 
-Sets a WordPress user's password by their `wp_users` ID.
+Sets a WordPress user's password.
 
 ```sh
-./main site-wp-reset-password --name=<site> --userID=<id> --password=<pass>
+./main site-wp-reset-password --name=<site> [--userID=<id> | --user=<login>] --password=<pass>
 ```
 
 | Flag | Required | Description |
 | --- | --- | --- |
 | `--name` | yes | The site whose user to change. Must be a `wordpress` site. |
-| `--userID` | yes | The `ID` from `site-wp-list-users`. |
+| `--userID` | no | The `ID` from `site-wp-list-users`. |
+| `--user` | no | The `LOGIN` from `site-wp-list-users`, if you'd rather name the user than number them. Passing both `--userID` and `--user` is an error. |
 | `--password` | yes | The new password. |
+
+With neither `--userID` nor `--user`, the password of the site's first administrator (the
+one with the lowest ID) is reset — so
+`./main site-wp-reset-password --name=blog --password='new-pass'` recovers a site you are
+locked out of, printing the login it picked.
 
 Like `site-wp-list-users`, it runs inside the site container, but calls WordPress's own
 `wp_set_password()`, so the password is hashed exactly the way a login or the dashboard would
 hash it — not a MySQL `MD5()` shortcut. The user and password are passed to the container as
 environment, not baked into the command, so a password with shell metacharacters is safe. It
-fails if no user has that ID.
+fails if no user matches.
 
 ```sh
 ./main site-wp-reset-password --name=blog --userID=1 --password='new-pass'
+./main site-wp-reset-password --name=blog --user=editor --password='new-pass'
 ```
 
 ### db
@@ -715,6 +739,57 @@ quotes or spaces needs no special care. They are still on `wpdock`'s own command
 though, which is the price of a flag: they will show in your shell history and, while the
 command runs, in `ps` on the host. Prefer a shell configured not to record them, or read
 them from a variable rather than typing them literally.
+
+## Makefile
+
+The Makefile wraps the binary with the old make/bash stack's target names and parameters, so
+muscle memory (and any automation calling `make`) keeps working. Each target it carries takes
+the old parameters unchanged — new ones were only added, none removed. Parameters are
+case-sensitive, exactly as before: `NAME=`, not `name=`. Anything without a target here
+(`site-convert`, `site-nuke`, `site-restore`, `site-update`, `site-list`, `ssl --renew`, …)
+is run as a direct `./main` command.
+
+Two variables aim it:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PREFIX` | `.` | The install tree (`make install PREFIX=...` creates it). All targets read `$(PREFIX)/.env` for defaults. |
+| `WPDOCK` | `./main` | The binary to run, as built by `make build`. |
+
+| Target | Parameters | What it runs |
+| --- | --- | --- |
+| `build` | | `go build -o main ./src` |
+| `install` | `[FORCE=1] [YES=1]` | `install` — writes the tree, `docker-compose.yml`, `.env` and `.env.example` at `PREFIX` |
+| `up` / `down` / `restart` / `logs` | | `docker compose -f $(PREFIX)/docker-compose.yml ...` |
+| `add-site` | `NAME= DOMAIN= [ALIASES="a b"] [TYPE=wp\|php] [DB=default\|<version>] [PHP_VERSION=] [WP_VERSION=] [MEMORY=] [CPUS=] [PIDS=]` | for `wp`: `db --create-user` (database and user `wp_<name>`, random password) then `site-add`; for `php`: `site-add` alone |
+| `set-aliases` | `NAME= [ALIASES="a b"]` | `site-update --aliases=...`; empty `ALIASES` clears them; reminds you to rerun `make ssl` if the site has a certificate |
+| `teardown-all` | `[PURGE=1] [WIPE_DB=1] [YES=1]` | `site-nuke` for every managed site; `WIPE_DB=1` also `docker compose down -v` |
+| `ssl` | `NAME= [EMAIL=] [STAGING=1]` | `ssl` — `EMAIL` falls back to `WPDOCK_LETSENCRYPT_EMAIL` in `.env` |
+| `install-renewal-cron` | `[SCHEDULE='0 3 * * *']` | replaces its own crontab line (tagged `wpdock-renew-ssl`) with one running `ssl --renew` |
+| `backup` | `NAME=` | `site-backup` |
+| `reset-password` | `NAME= PASSWORD= [USER=]` | `site-wp-reset-password` — with no `USER=`, the first administrator |
+| `list-users` | `NAME=` | `site-wp-list-users` |
+| `stop` | `NAME=` | `site-stop` |
+| `details` | `NAME=` | `site-details` |
+| `lint` | | `gofmt -l src` and `go vet ./...` |
+| `version` / `bump` | `[PART=major\|minor\|patch]` | prints or increments the `VERSION` file |
+
+What behaves differently from the old stack:
+
+- `ALIASES` is still space-separated on the make command line; the Makefile turns it into the
+  comma-separated form the binary's `--aliases` takes. And where the old stack 301-redirected
+  aliases to the domain, wpdock serves them as the site.
+- `TYPE=wp` maps to `--type=wordpress`; `DB=default` maps to `--db-host=wpdock-mariadb-11` and
+  `DB=<version>` to `--db-host=wpdock-mariadb-<version>` (a MariaDB container you run yourself
+  on the `wpdock` network).
+- `add-site` names the database and its user `wp_<name>` (dashes become underscores) as before,
+  creating them with `WPDOCK_MARIADB_ROOT_PASSWORD` from `$(PREFIX)/.env`.
+- `reset-password` ignores the `USER` environment variable — only an explicit
+  `make reset-password USER=...` names a user, otherwise the first administrator is picked.
+- `install-docker`, `remove-site`, `set-resources`, `list-sites`, `add-db`/`remove-db`/`list-dbs`,
+  `renew-ssl` and `restore-site` are gone — the site ones are single `./main` commands now
+  (`site-nuke`, `site-update`, `site-list`, `ssl --renew`), and Docker/extra MariaDB servers
+  are yours to manage.
 
 ## Exit codes
 
