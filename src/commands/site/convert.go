@@ -143,6 +143,12 @@ func convert(args []string) error {
 		}
 	}
 
+	// Pull before touching anything: a version pair Docker Hub never published
+	// (a backport release, a retired php variant) should cost nothing to hit.
+	if err := ensureImage(img); err != nil {
+		return fmt.Errorf("%v\n      %s may not be a published tag — pass a --wp-version/--php-version pair that exists on hub.docker.com", err, img)
+	}
+
 	if c.DBName != "" {
 		dump, err := os.CreateTemp("", "wpdock-convert-*.sql")
 		if err != nil {
