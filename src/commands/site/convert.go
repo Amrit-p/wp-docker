@@ -16,7 +16,7 @@ import (
 )
 
 func ConvertUsage() {
-	fmt.Fprint(os.Stderr, `  site-convert --prefix=<path> --old-prefix=<path> --name=<site> --root-password=<pass> [--yes]
+	fmt.Fprint(os.Stderr, `  site-convert --prefix=<path> --old-prefix=<path> --name=<site> --root-password=<pass> [--type=wp|php] [--yes]
         copy a site off the old make/bash stack into wpdock: files, database and routing
 `)
 }
@@ -34,6 +34,8 @@ func convert(args []string) error {
 	name := fs.String("name", "", "site to convert, named as the old stack knows it")
 	dbHost := fs.String("db-host", "wpdock-mariadb-11", "wpdock mariadb container that receives the database")
 	rootPass := fs.String("root-password", "", "mariadb root password of --db-host, which creates the database and user")
+	typ := fs.String("type", "", "override the wp.type read from the old container (wp or php)")
+	domain := fs.String("domain", "", "override the domain read from the old container's wp.domain label")
 	aliases := fs.String("aliases", "", "override the aliases read back from the old vhost (comma-separated)")
 	wpVer := fs.String("wp-version", "", "override the wordpress version detected from the old container")
 	phpVer := fs.String("php-version", "", "override the php version detected from the old container")
@@ -61,11 +63,17 @@ func convert(args []string) error {
 		return fmt.Errorf("--root-password is required to create the site's database and user on %s", *dbHost)
 	}
 
-	c, oldImage, oldDB, err := inspectOldSite(oldRoot, *name)
+	c, oldImage, oldDB, err := inspectOldSite(oldRoot, *name, *typ)
 	if err != nil {
 		return err
 	}
 	c.DBHost = *dbHost
+	if *domain != "" {
+		c.Domain = *domain
+	}
+	if c.Domain == "" {
+		return fmt.Errorf("%s has no wp.domain label — pass --domain=<host>", oldContainer(*name))
+	}
 	if fsSet(fs, "aliases") {
 		c.Aliases = *aliases
 	}
@@ -106,6 +114,9 @@ func convert(args []string) error {
 		return err
 	}
 	webroot := oldWebroot(oldRoot, c)
+	if !exists(webroot) {
+		return fmt.Errorf("%s does not exist — is --old-prefix the old stack's root, the directory holding its sites/ and nginx/?", webroot)
+	}
 
 	fmt.Printf("convert %s\n\n", c.Name)
 	field("from", fmt.Sprintf("%s (%s)", old, oldImage))
@@ -187,7 +198,7 @@ func oldContainer(name string) string { return "wp_" + name }
 // inspectOldSite reads the old container's labels, env and limits into a
 // wpdock Config, and returns the old image and database container with it.
 // The versions stay empty here: they come from flags or detection.
-func inspectOldSite(oldRoot, name string) (*Config, string, string, error) {
+func inspectOldSite(oldRoot, name, typeOverride string) (*Config, string, string, error) {
 	old := oldContainer(name)
 
 	labels := map[string]string{}
@@ -225,9 +236,25 @@ func inspectOldSite(oldRoot, name string) (*Config, string, string, error) {
 	}
 
 	// The old stack's env names differ by type: WORDPRESS_DB_* for wp sites,
-	// bare DB_* for php ones (which may have no database at all).
-	switch labels["wp.type"] {
-	case "wp":
+	// bare DB_* for php ones (which may have no database at all). Older old-stack
+	// containers carry no wp.type label at all, so an empty one falls back to
+	// --type, then to what the container and its files give away.
+	typ := labels["wp.type"]
+	if typeOverride != "" {
+		typ = typeOverride
+	}
+	if typ == "" {
+		switch {
+		case envValue(env, "WORDPRESS_DB_NAME") != "":
+			typ = "wp"
+		case exists(filepath.Join(oldRoot, "sites", name, "wordpress")):
+			typ = "wp"
+		case exists(filepath.Join(oldRoot, "sites", name, "app")):
+			typ = "php"
+		}
+	}
+	switch typ {
+	case "wp", "wordpress":
 		c.Type = "wordpress"
 		c.DBName = envValue(env, "WORDPRESS_DB_NAME")
 		c.DBUser = envValue(env, "WORDPRESS_DB_USER")
@@ -238,7 +265,7 @@ func inspectOldSite(oldRoot, name string) (*Config, string, string, error) {
 		c.DBUser = envValue(env, "DB_USER")
 		c.DBPass = envValue(env, "DB_PASSWORD")
 	default:
-		return nil, "", "", fmt.Errorf("%s has wp.type=%q, want wp or php", old, labels["wp.type"])
+		return nil, "", "", fmt.Errorf("%s has wp.type=%q and it could not be inferred — pass --type=wp or --type=php", old, typ)
 	}
 
 	oldDB := envValue(env, "WORDPRESS_DB_HOST")

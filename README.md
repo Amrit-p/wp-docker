@@ -242,6 +242,8 @@ of) into wpdock: its files, its database and its routing.
 | `--name` | yes | The site, named as the old stack knows it (container `wp_<name>`, files `sites/<name>/`). |
 | `--root-password` | yes | The MariaDB root password of `--db-host`, which creates the database and user there. |
 | `--db-host` | no | The wpdock MariaDB container that receives the database. Default `wpdock-mariadb-11`. |
+| `--type` | no | Override the `wp.type` label (`wp` or `php`). Old-stack containers from before that label carry none; without the flag the type is inferred from the container's `WORDPRESS_DB_NAME` env, then from whether `sites/<name>/wordpress` or `sites/<name>/app` exists. |
+| `--domain` | no | Override the domain read from the old container's `wp.domain` label; required if that label is missing. |
 | `--aliases` | no | Override the aliases read back from the old vhost's `# Aliases:` header (comma-separated). |
 | `--wp-version` | no | Override the WordPress version, otherwise read from the running old container's `wp-includes/version.php`. |
 | `--php-version` | no | Override the PHP version, otherwise read from the running old container's `php -r`. |
