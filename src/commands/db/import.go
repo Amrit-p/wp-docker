@@ -5,7 +5,9 @@ import (
 	"os"
 )
 
-func importSQL(container, name, user, password, path string) error {
+// ImportSQL is exported for site-convert, which loads the dump of an old
+// site's database the way `db --import` would.
+func ImportSQL(container, name, user, password, path string) error {
 	if err := checkIdent("--db-name", name, 64); err != nil {
 		return err
 	}

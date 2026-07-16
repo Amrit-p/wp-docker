@@ -27,7 +27,7 @@ Run `./main` with no arguments to list the available commands, or
 
 Every command accepts `--prefix`, and it defaults to the current directory — so you can `cd` into
 your install tree and leave it off. The commands that read or write files under it (`install`,
-`ssl` and `site-add`/`update`/`nuke`/`backup`/`restore`/`shell`) use it; the rest (`db`,
+`ssl` and `site-add`/`convert`/`update`/`nuke`/`backup`/`restore`/`shell`) use it; the rest (`db`,
 `site-list`, `site-details`, `site-stop`) accept it for consistency but act on containers, not
 the tree.
 
@@ -207,6 +207,98 @@ that and refuses with the fix spelled out: rerun `install --force` to regenerate
 ```sh
 ./main ssl --prefix=~/wpdock --name=blog --email=you@example.com
 ```
+
+### site-convert
+
+Copies a site off the old make/bash stack (the Makefile and `scripts/` this repo grew out
+of) into wpdock: its files, its database and its routing.
+
+```sh
+./main site-convert --prefix=<path> --old-prefix=<path> --name=<site> --root-password=<pass> \
+  [--db-host=<h>] [--aliases=<d,d>] [--wp-version=<v>] [--php-version=<v>] [--yes]
+```
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--prefix` | no | The wpdock tree `install` created (default: the current directory). |
+| `--old-prefix` | yes | The old stack's root — the directory holding its `sites/` and `nginx/`. |
+| `--name` | yes | The site, named as the old stack knows it (container `wp_<name>`, files `sites/<name>/`). |
+| `--root-password` | yes | The MariaDB root password of `--db-host`, which creates the database and user there. |
+| `--db-host` | no | The wpdock MariaDB container that receives the database. Default `wpdock-mariadb-11`. |
+| `--aliases` | no | Override the aliases read back from the old vhost's `# Aliases:` header (comma-separated). |
+| `--wp-version` | no | Override the WordPress version, otherwise read from the running old container's `wp-includes/version.php`. |
+| `--php-version` | no | Override the PHP version, otherwise read from the running old container's `php -r`. |
+| `--yes` | no | Skip the confirmation prompt. |
+
+The old container is the source of truth, the way a wpdock container is: domain and type come
+from its `wp.*` labels, the database name, user and password from its environment, the resource
+caps from its `HostConfig`, and both versions from executing `php` inside it — which is why it
+must be running (or both `--*-version` flags given). It prints the whole plan — old and new
+container and image, files, database move — plus warnings, and asks before doing anything.
+
+Then it: dumps the old database (as the site's own user, from whichever MariaDB server the old
+site was on, extra `add-db` servers included), creates the same database, user and password on
+`--db-host` and imports the dump; copies `sites/<name>/wordpress` (or `app/`) into
+`data/<name>`, rechowning from Alpine's `www-data` (82) to Debian's (33) and dropping in the
+standard WordPress `.htaccess` if the files have none — the old nginx did the rewriting, so
+they won't, and without it Apache 404s every pretty permalink; and starts the wpdock container
+and writes the vhost.
+
+The old site is not touched: it keeps running and keeps serving until you cut over. That also
+means the copy diverges from the moment it is made — convert close to the cutover, or convert
+again. If the wpdock proxy is not running yet (it usually cannot be, the old nginx holds ports
+80/443), the vhost sits on disk and is picked up when it starts.
+
+```sh
+./main site-convert --prefix=~/wpdock --old-prefix=~/wp-stack --name=blog --root-password=change-me
+```
+
+The cutover itself, once every site is converted:
+
+```sh
+docker stop wp_nginx                                   # the old proxy releases 80/443
+docker compose -f ~/wpdock/docker-compose.yml up -d    # the wpdock proxy takes them
+./main ssl --prefix=~/wpdock --name=blog --email=you@example.com   # per site, reissue https
+docker stop wp_blog                                    # per site, retire the old container
+```
+
+#### what breaks when converting
+
+The two stacks differ by design, so some things change behavior and a few genuinely break:
+
+- **Aliases stop redirecting.** The old stack 301'd every alias to the canonical domain
+  (`www.blog.com` → `blog.com`); wpdock puts aliases in `server_name` and serves them.
+  WordPress itself still canonicalizes to its `siteurl`, so wp sites mostly keep the redirect
+  in practice — a php app does not, unless it does its own.
+- **php sites lose their database extensions.** The old stack built `wp-stack-php` with
+  `mysqli`, `pdo_mysql`, `gd`, `intl`, `zip` and `opcache`; wpdock runs the stock
+  `php:<v>-apache`, which ships none of them. A php site that uses a database will fatal until
+  those are installed in the image.
+- **php sites' env vars are renamed.** The old stack passed `DB_HOST/DB_NAME/DB_USER/DB_PASSWORD`;
+  wpdock passes the same values as `WORDPRESS_DB_*`, whatever the type. An app reading
+  `getenv('DB_HOST')` finds nothing until it reads the new names.
+- **php sites lose the nginx deny guards.** The old php vhost denied `/vendor/`, `/storage/`,
+  dotfiles, `composer.json`, `*.sql`, `*.log` and more; wpdock's shared `security.conf` only
+  denies dotfiles. Anything else the app kept next to `index.php` becomes reachable —
+  recreate the guards in an `.htaccess`.
+- **HTTPS does not carry over.** The old certs live under the old stack's `nginx/ssl` with
+  lineages named by *site*; wpdock names lineages by *domain* and manages its own
+  `certs/`. Converted sites serve plain HTTP until `ssl --name=<site>` reissues — do it right
+  after the cutover, and expect that gap.
+- **The hardening profile is thinner.** The old containers ran `--read-only` with tmpfs
+  mounts, `--memory-swap` pinned to `--memory`, and `no-new-privileges`; wpdock containers run
+  writable with Docker's defaults. Nothing user-visible changes, but a compromised site can
+  now write outside its docroot inside its own container.
+- **FPM becomes Apache.** nginx stops serving static files directly and `.htaccess` files are
+  honored again. That is what makes permalinks work with zero nginx config — and it also means
+  any behavior an old site owed to its nginx vhost (custom headers, rewrites added by hand) is
+  gone until recreated.
+- **Sites on extra MariaDB servers move to MariaDB 11.** The old `make add-db` servers pinned a
+  site to an older MariaDB; the dump imports into `--db-host` regardless. Upgrading (10.x → 11)
+  is what MariaDB supports; converting a site whose server was *newer* than `--db-host` is not.
+- **Only the wpdock feature set carries forward.** `set-resources` (live, no recreate) becomes
+  `site-update` (recreates); the old per-site `site-credentials.txt` stays behind — wpdock
+  stores the same facts on the container, shown by `site-details`.
 
 ### site-update
 
@@ -652,6 +744,7 @@ src/
     site/
       site.go           the shared core: flags, docker exec, labels, images, vhosts, backups
       add.go            site-add: runs the container, writes the vhost, reloads nginx
+      convert.go        site-convert: copies a site off the old make/bash stack into wpdock
       ssl.go            ssl: obtains a Let's Encrypt certificate and switches the vhost to https
       update.go         site-update: reads the labels back, applies changes, recreates
       list.go           site-list: tabulates every wpdock.managed container

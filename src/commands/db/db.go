@@ -74,7 +74,7 @@ func Run(args []string) error {
 		}); err != nil {
 			return err
 		}
-		if err := createUser(*container, *name, *user, *password, *root); err != nil {
+		if err := CreateUser(*container, *name, *user, *password, *root); err != nil {
 			return fmt.Errorf("db: %v", err)
 		}
 
@@ -88,7 +88,7 @@ func Run(args []string) error {
 		}); err != nil {
 			return err
 		}
-		if err := importSQL(*container, *name, *user, *password, *file); err != nil {
+		if err := ImportSQL(*container, *name, *user, *password, *file); err != nil {
 			return fmt.Errorf("db: %v", err)
 		}
 

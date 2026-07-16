@@ -5,7 +5,9 @@ import (
 	"strings"
 )
 
-func createUser(container, name, user, password, root string) error {
+// CreateUser is exported for site-convert, which provisions the site's
+// database on the new server the way `db --create-user` would.
+func CreateUser(container, name, user, password, root string) error {
 	if err := checkIdent("--db-name", name, 64); err != nil {
 		return err
 	}

@@ -20,6 +20,7 @@ var commands = map[string]command{
 	"db":                     {run: db.Run, usage: db.Usage},
 	"ssl":                    {run: site.SSL, usage: site.SSLUsage},
 	"site-add":               {run: site.Add, usage: site.AddUsage},
+	"site-convert":           {run: site.Convert, usage: site.ConvertUsage},
 	"site-update":            {run: site.Update, usage: site.UpdateUsage},
 	"site-list":              {run: site.List, usage: site.ListUsage},
 	"site-details":           {run: site.Details, usage: site.DetailsUsage},
