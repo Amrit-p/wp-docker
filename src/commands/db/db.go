@@ -26,6 +26,7 @@ type flags struct {
 func Run(args []string) error {
 	fs := flag.NewFlagSet("db", flag.ContinueOnError)
 	fs.Usage = Usage
+	fs.String("prefix", "", "installation directory (accepted for consistency; db does not use it)")
 	create := fs.Bool("create-user", false, "create a user that may reach only one database")
 	load := fs.Bool("import", false, "load a sql file into one database")
 	empty := fs.Bool("truncate", false, "drop every table in one database")

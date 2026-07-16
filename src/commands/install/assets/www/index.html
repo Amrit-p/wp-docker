@@ -37,12 +37,14 @@
   <p>Nothing is deployed at this host name yet, so you are seeing the shared webroot.</p>
   <pre><code>prefix   {{.Root}}
 webroot  {{.Root}}/www
-sites    {{.Root}}/sites.json
 
-sites.json ships with an "example" site. Copy it, rename it,
-then deploy it by name:
+Add a site and route a domain to it:
 
-wpdock deploy --prefix={{.Root}} --name=example</code></pre>
+wpdock site-add --prefix={{.Root}} --name=blog --domain=blog.test \
+  --type=wordpress --wp-version=6.8 --php-version=8.3 \
+  --memory=512m --cpu=1.0 --pids=256 \
+  --db-host=wpdock-mariadb-11 --db-name=blog \
+  --db-user=blog --db-password=change-me</code></pre>
 </main>
 </body>
 </html>

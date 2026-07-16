@@ -1,12 +1,10 @@
 package db
 
 import (
-	"bufio"
-	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
+
+	"wpdock/src/prompt"
 )
 
 func truncate(container, name, user, password string, yes bool) error {
@@ -42,7 +40,7 @@ func truncate(container, name, user, password string, yes bool) error {
 	fmt.Println()
 
 	if !yes {
-		ok, err := confirm()
+		ok, err := prompt.Confirm("drop them?")
 		if err != nil {
 			return err
 		}
@@ -109,19 +107,4 @@ func list(names []string) string {
 		quoted = append(quoted, quoteIdent(n))
 	}
 	return strings.Join(quoted, ", ")
-}
-
-func confirm() (bool, error) {
-	fmt.Print("drop them? [y/N] ")
-
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, err
-	}
-
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
-		return true, nil
-	}
-	return false, nil
 }

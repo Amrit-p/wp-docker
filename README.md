@@ -1,6 +1,12 @@
 # wpdock
 
-A command line tool for deploying sites.
+A command line tool for running WordPress and PHP sites in Docker on a single host.
+
+Each site is one container built from an official image
+(`wordpress:<version>-php<php-version>-apache` or `php:<php-version>-apache`). A shared
+nginx container reverse-proxies each site's domain to its container, and the sites share
+one MariaDB. A site is described entirely by the flags it was added with, which are stored
+as labels on its container, so there is no state file to keep in sync.
 
 ## Build
 
@@ -19,20 +25,25 @@ This produces a `main` binary in the project root. Run it with `./main`.
 Run `./main` with no arguments to list the available commands, or
 `./main <command> -h` to see the flags for one command.
 
+Every command accepts `--prefix`, and it defaults to the current directory — so you can `cd` into
+your install tree and leave it off. The commands that read or write files under it (`install` and
+`site-add`/`update`/`nuke`/`backup`/`restore`/`shell`) use it; the rest (`db`, `site-list`,
+`site-details`, `site-stop`) accept it for consistency but act on containers, not the tree.
+
 ## Commands
 
 ### install
 
-Creates the directory tree that `deploy` writes into.
+Creates the directory tree the `site-*` commands write into.
 
 ```sh
-./main install --prefix=<path> [--force] [--yes]
+./main install [--prefix=<path>] [--force] [--yes]
 ```
 
 | Flag | Required | Description |
 | --- | --- | --- |
-| `--prefix` | yes | The directory to install into. Created if it does not exist. |
-| `--force` | no | Rewrite generated files that already exist. Never touches `sites.json`. |
+| `--prefix` | no | The directory to install into (default: the current directory). Created if it does not exist. |
+| `--force` | no | Rewrite generated files that already exist. |
 | `--yes` | no | Skip the confirmation prompt. |
 
 It prints what it is about to do and asks before writing anything. Rerunning it is
@@ -40,109 +51,332 @@ safe: without `--force` every file that already exists is skipped.
 
 ```
 <prefix>/
-  sites.json                     the sites and how to run them. created only if missing
-  data/                          per-site docroots: data/<site-name>/
+  docker-compose.yml             the shared nginx + mariadb services, on the wpdock network
+  data/                          per-site docroots: data/<site-name>/, bind-mounted in
+  backups/                       site-backup writes the .tgz and .json here
   nginx/
-    nginx.conf                   generated main config
-    conf/                        per-site vhosts, written by deploy
+    nginx.conf                   generated main config for the shared nginx container
+    conf/                        per-site vhosts, written by site-add
     conf.d/
-      fastcgi.conf               fastcgi params, included by every vhost
       security.conf              headers and deny rules, included by every vhost
     templates/
-      wordpress.conf.tmpl        the vhost the wordpress stack renders
-      php.conf.tmpl              the vhost the php stack renders
+      site.conf.tmpl             the vhost every site renders
     logs/                        nginx error, access and pid files
     tmp/                         nginx client body, proxy and fastcgi temp files
   www/                           shared webroot, holds the default page
 ```
 
-`sites.json` is state rather than a generated file, so `--force` leaves it alone;
-delete it by hand if you really want a fresh one. Everything else is regenerated
-from the binary, so local edits to `nginx.conf`, the snippets or the templates are
-lost on `--force`.
+Everything here is regenerated from the binary, so `--force` overwrites local edits to
+`nginx.conf`, `security.conf` or the template. `data/` and `backups/` hold your sites and
+are only ever added to, never rewritten.
 
-### deploy
+## Shared containers
 
-Deploys a site.
+The `site-*` and `db` commands rely on two long-lived containers on a Docker network named
+`wpdock`. `install` writes a `docker-compose.yml` at the prefix that defines both:
+
+| Container | Role |
+| --- | --- |
+| `wpdock-nginx-1.27` | The reverse proxy on port 80. The compose file runs the official `nginx` image with `<prefix>` mounted at the same path (so the absolute paths in `nginx.conf` resolve) via `nginx -c <prefix>/nginx/nginx.conf`. It serves `nginx.conf` and picks up the vhosts `site-add` writes into `conf/`. To apply a new vhost, `site-add` finds the proxy by its `wpdock.role=proxy` label — not its name, so the nginx version can change freely — and sends it `SIGHUP` (`docker kill --signal=HUP`), which the nginx master turns into a graceful reload. |
+| `wpdock-mariadb-11` | The shared database. `db --create-user` provisions a database and user in it; each site connects to it with `--db-host=wpdock-mariadb-11`. Its data persists in the `wpdock-mariadb-data` volume. |
+
+Bring them up once, from anywhere:
 
 ```sh
-./main deploy --prefix=<path> --name=<site>
+docker compose -f <prefix>/docker-compose.yml up -d
+```
+
+The MariaDB root password defaults to `change-me`; set `WPDOCK_MARIADB_ROOT_PASSWORD` in the
+environment or a `.env` file beside the compose file to change it before the first start — it is
+the `--root_password` you pass to `db --create-user`. `site-add` also runs `docker network create
+wpdock` itself if the network is somehow missing.
+
+A site's files are written by its container as `root`/`www-data`, which the `wpdock` binary —
+running as you — cannot archive, replace or delete. So `site-backup`, `site-restore` and
+`site-nuke` do those file operations inside a throwaway `busybox` container that runs as root,
+pulling the small `busybox` image once if it is not already present.
+
+### site-add
+
+Creates and starts a site's container, then routes its domain to it.
+
+```sh
+./main site-add --prefix=<path> --name=<site> --domain=<domain> [--aliases=<d,d>] \
+  --type=<wordpress|php> [--wp-version=<v>] --php-version=<v> \
+  --memory=<m> --cpu=<c> --pids=<n> \
+  [--db-host=<h> --db-name=<db> --db-user=<u> --db-password=<p>]
 ```
 
 | Flag | Required | Description |
 | --- | --- | --- |
-| `--prefix` | yes | The directory `install` created. `deploy` reads `<prefix>/sites.json`. |
-| `--name` | yes | The name of the site to deploy. Must be listed in `sites.json`. |
+| `--prefix` | no | The directory `install` created (default: the current directory). |
+| `--name` | yes | The site name. Becomes the container `wpdock-<name>` and the docroot `data/<name>`. Letters, digits, `-` and `_`. |
+| `--domain` | yes | The primary domain nginx routes to the site, e.g. `blog.com`. |
+| `--aliases` | no | Comma-separated extra domains, added to `server_name` after `--domain`. |
+| `--type` | yes | `wordpress` or `php`, and nothing else. |
+| `--wp-version` | wordpress | The WordPress version, e.g. `6.8`. Required for `wordpress`, ignored for `php`. |
+| `--php-version` | yes | The PHP version, e.g. `8.3`. |
+| `--memory` | no | Memory cap, in Docker's units. Default `256m`. |
+| `--cpu` | no | CPU quota. Default `0.5` (half a core). |
+| `--pids` | no | Cap on processes in the container. Default `100`. |
+| `--db-host` | wordpress | The database host, usually the shared `wpdock-mariadb-11` container. |
+| `--db-name` | wordpress | The database the site connects to. It must already exist. |
+| `--db-user` | wordpress | The user the site connects as. |
+| `--db-password` | wordpress | That user's password. |
 
-There is no `--stack` flag. `deploy` looks `--name` up in `<prefix>/sites.json` and
-uses the entry it finds, so a site is described in one place rather than on every
-command line. Deploying a name that is not listed is an error, as is a listed site
-whose `stack` is not one the binary knows.
+The image is `wordpress:<version>-php<php-version>-apache` or `php:<php-version>-apache`.
+The container is self-contained: Apache serves both static files and PHP, and nginx just
+proxies to it, so the WordPress and PHP vhosts are identical.
 
-`install` writes a `sites.json` holding one `example` site. It is there to be copied
-and renamed, and it is a real entry: `deploy --name=example` will deploy it.
+`site-add` does **not** create the database. Make it first with `db --create-user` (below),
+then pass the same host, name, user and password here. The four `--db-*` values are passed to
+the container as `WORDPRESS_DB_HOST/NAME/USER/PASSWORD`; WordPress creates its tables in the
+database on first run. For a `php` site the `--db-*` flags are optional, and are forwarded as
+the same environment variables if given.
 
-`sites` is an object, not a list: each key is a site name, and `--name` is looked up
-against those keys.
+The site's docroot is bind-mounted from `<prefix>/data/<name>`, so its files live on the host
+and survive the container being replaced by `site-update` or `site-restore`.
 
-```json
-{
-  "sites": {
-    "example": {
-      "stack": "wordpress",
-      "wordpress": "6.8",
-      "php": "8.3",
-      "containers": [
-        {
-          "name": "wpdock-nginx",
-          "env": {
-            "NGINX_HOST": "example.test"
-          }
-        },
-        {
-          "name": "wpdock-mariadb",
-          "env": {
-            "MARIADB_DATABASE": "example",
-            "MARIADB_USER": "example",
-            "MARIADB_PASSWORD": "change-me"
-          }
-        }
-      ],
-      "resources": {
-        "memory": "512m",
-        "cpus": "1.0",
-        "max_pids": 256
-      }
-    }
-  }
-}
-```
-
-| Field | Description |
-| --- | --- |
-| `stack` | Which stack deploys it: `wordpress` or `php` (plain PHP). |
-| `wordpress` | The WordPress version to run, e.g. `6.8`. Required by the `wordpress` stack, ignored by `php`. |
-| `php` | The PHP version to run, e.g. `8.3`. |
-| `containers` | The containers the site runs on, below. |
-| `resources` | The limits every one of them gets, below. |
-
-| `containers` field | Description |
-| --- | --- |
-| `name` | The container name, e.g. `wpdock-nginx`. |
-| `env` | The environment it is started with, as a `KEY: value` object. May be omitted. |
-
-| `resources` field | Description |
-| --- | --- |
-| `memory` | Memory cap, in Docker's units, e.g. `512m`. |
-| `cpus` | CPU quota, e.g. `1.0` for one core. |
-| `max_pids` | Cap on processes in the container, e.g. `256`. |
-
-Nothing labels a container by role: `containers` is an ordered list of names and
-environments, so a stack that needs to tell nginx from MariaDB does so by name. The
-example site's `MARIADB_PASSWORD` is `change-me`, which is exactly what it means.
+`--name` must be free: if a container `wpdock-<name>` already exists, running or stopped,
+`site-add` refuses rather than replace it. Change an existing site with `site-update`, or remove
+it with `site-nuke`, first.
 
 ```sh
-./main deploy --prefix=~/wpdock --name=example
+./main db --create-user --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --root_password=change-me
+./main site-add --prefix=~/wpdock --name=blog --domain=blog.test \
+  --type=wordpress --wp-version=6.8 --php-version=8.3 \
+  --memory=512m --cpu=1.0 --pids=256 \
+  --db-host=wpdock-mariadb-11 --db-name=blog --db-user=blog --db-password=change-me
+```
+
+### site-update
+
+Recreates a site's container with changed flags, keeping its files.
+
+```sh
+./main site-update --prefix=<path> --name=<site> [any site-add flag to change]
+```
+
+It reads the current settings back from the container's labels, applies only the flags you
+pass, and recreates the container. Because the docroot is a host volume, the site's files and
+uploads are untouched, so this is how you move a live site to a new PHP or WordPress version.
+
+```sh
+./main site-update --prefix=~/wpdock --name=blog --php-version=8.4
+```
+
+### site-list
+
+Lists every wpdock-managed site and its state.
+
+```sh
+./main site-list
+```
+
+It needs no flags and no `--prefix`: the sites are the containers labelled `wpdock.managed=true`,
+so it reads them straight from `docker ps` and lets Docker render the table. Stopped sites are
+listed too. It stays to four columns on purpose so it reads well as the list grows; for a
+site's versions, resources and database, use `site-details`.
+
+```
+NAMES         STATE     type        domain
+wpdock-blog   running   wordpress   blog.test
+wpdock-shop   exited    php         shop.test
+```
+
+### site-details
+
+Shows one site's settings, image and state.
+
+```sh
+./main site-details --name=<site>
+```
+
+It reads the same labels `site-update` does, so it is the way to see exactly how a site was
+run — its versions, resource caps, full database connection and current status — without
+`docker inspect`. It prints the `db-password`, so treat its output as you would any secret.
+
+```
+site blog
+
+  type        wordpress
+  domain      blog.test www.blog.test
+  wordpress   6.8
+  php         8.3
+  resources   memory=512m cpus=1.0 max_pids=256
+  db-host     wpdock-mariadb-11
+  db-name     blog
+  db-user     bloguser
+  db-password change-me
+  image       wordpress:6.8-php8.3-apache
+  status      running
+```
+
+A `php` site with no database omits the four `db-*` lines.
+
+### site-shell
+
+Opens a shell **inside** one site's container for a developer, isolated to that one site.
+
+```sh
+./main site-shell --prefix=<path> --name=<site> --user=<u> --password=<p> --port=<n>
+./main site-shell --prefix=<path> --name=<site> --close
+```
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--prefix` | no | The directory `install` created (default: the current directory). |
+| `--name` | yes | The site to grant access to. It must already exist. |
+| `--user` | to open | The login name for the developer. Letters, digits, `-` and `_`. |
+| `--password` | to open | The login password. |
+| `--port` | to open | The host port to expose SSH on, e.g. `2222`. |
+| `--close` | to close | Remove the access instead of granting it. |
+
+The official images have no SSH server, so the first time you open a shell wpdock builds a small
+image from the site's base image plus `openssh-server`, `sudo`, `wp-cli` and `composer` (tagged
+`wpdock-ssh:<base>`, built once per base and cached). It then recreates the site's container from
+that image with `--port` published and sshd running. The container's files are untouched (they
+live on the host volume), but the site restarts, so it is briefly unavailable during the swap.
+
+Before any of that, wpdock checks that `--port` is free. If another container already publishes
+it, the command fails immediately and leaves the running site untouched — a port clash never
+leaves you with a half-replaced container. `site-update` and `site-restore` run the same check
+before recreating a shell-enabled site.
+
+The developer logs in over SSH with `--user`/`--password` and lands in the live container as the
+web user (`www-data`), so they own every file and `wp-cli` runs without `--allow-root`. They have
+passwordless `sudo` for anything else. Because it is the site's own container — with no Docker
+socket and no host mounts — they cannot reach any other site's files or shell.
+
+```sh
+./main site-shell --prefix=~/wpdock --name=blog --user=dev --password=change-me --port=2222
+# the developer then:
+ssh -p 2222 dev@your-server        # a shell in blog's container: edit files, wp, composer, sudo
+```
+
+The access is stored on the container (`ssh-port`/`ssh-user` labels, password in its env), so it
+**survives `site-update`**: a version change rebuilds the ssh image and re-publishes the port.
+`site-details` shows it as `shell open (port …, user …)`. `site-shell --close` recreates the
+container from the plain base image, dropping sshd and the port.
+
+Three things to weigh before exposing the port:
+
+- **It is password SSH on a public port.** Use a strong password and firewall the port to the
+  developer's address (on Lightsail, the instance firewall). 
+- **`sudo` gives root *inside that container*.** That is the point of "whole container access",
+  but it also means a WordPress compromise reaches container-root. It never reaches the host.
+- **`site-backup` of a shell-enabled site commits the ssh image**, so the backup carries sshd.
+
+### site-stop
+
+Stops a site's container, leaving its files and database in place.
+
+```sh
+./main site-stop --name=<site>
+```
+
+The vhost stays, so nginx returns `502` for the domain until the site runs again. Start it
+back up by recreating it with `site-update` (with no changed flags), or with `docker start
+wpdock-<name>`.
+
+### site-nuke
+
+Deletes a site's container, its files and its database.
+
+```sh
+./main site-nuke --prefix=<path> --name=<site> [--yes]
+```
+
+It prints what it is about to delete and asks first, like `install` and `db --truncate`.
+`--yes` skips the prompt. It removes the container, deletes `<prefix>/data/<name>`, removes the
+vhost and reloads nginx, and then drops the database — connecting as the site's own
+`--db-user`, so it drops only that database and cannot touch any other on the shared server.
+
+```sh
+./main site-nuke --prefix=~/wpdock --name=blog
+```
+
+### site-backup
+
+Commits the container to a timestamped image and archives its files.
+
+```sh
+./main site-backup --prefix=<path> --name=<site>
+```
+
+It writes three things under `<prefix>/backups/`, all sharing one backup ID
+(`<name>-<YYYYmmdd-HHMMSS>`):
+
+| Artifact | What it is |
+| --- | --- |
+| image `wpdock-<name>:<timestamp>` | `docker commit` of the container: its installed packages and PHP config. |
+| `<id>.tgz` | The docroot, `data/<name>`, which the image does not capture because it is a mounted volume. |
+| `<id>.json` | A manifest of the site's settings, so `site-restore` can rebuild the container. |
+
+The manifest holds the database password, so keep `<prefix>/backups/` as private as any other
+copy of a site.
+
+```sh
+./main site-backup --prefix=~/wpdock --name=blog
+```
+
+### site-restore
+
+Recreates a site from a backup: its image, its files and its routing.
+
+```sh
+./main site-restore --prefix=<path> --backupID=<id>
+```
+
+It reads the manifest, unpacks the `.tgz` back into `data/<name>`, removes any current
+container of that name, starts a new one from the backup image, and rewrites and reloads the
+vhost. The database is not part of a backup and is left as it is.
+
+```sh
+./main site-restore --prefix=~/wpdock --backupID=blog-20260715-203000
+```
+
+### site-wp-list-users
+
+Lists the WordPress users (the `wp_users` table) of a site.
+
+```sh
+./main site-wp-list-users --name=<site>
+```
+
+It runs `php` inside the running site container, loading WordPress so the query uses the site's
+own database connection and table prefix, and prints the ID, login, email, registration date and
+display name of each user. The password hash is not shown. The site must be a `wordpress` site;
+a `php` site is refused.
+
+```
+ID  LOGIN   EMAIL               REGISTERED           NAME
+1   admin   admin@example.com   2026-07-16 04:47:41  admin
+2   editor  editor@example.com  2026-07-16 04:47:43  editor
+```
+
+### site-wp-reset-password
+
+Sets a WordPress user's password by their `wp_users` ID.
+
+```sh
+./main site-wp-reset-password --name=<site> --userID=<id> --password=<pass>
+```
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--name` | yes | The site whose user to change. Must be a `wordpress` site. |
+| `--userID` | yes | The `ID` from `site-wp-list-users`. |
+| `--password` | yes | The new password. |
+
+Like `site-wp-list-users`, it runs inside the site container, but calls WordPress's own
+`wp_set_password()`, so the password is hashed exactly the way a login or the dashboard would
+hash it — not a MySQL `MD5()` shortcut. The user and password are passed to the container as
+environment, not baked into the command, so a password with shell metacharacters is safe. It
+fails if no user has that ID.
+
+```sh
+./main site-wp-reset-password --name=blog --userID=1 --password='new-pass'
 ```
 
 ### db
@@ -150,17 +384,17 @@ example site's `MARIADB_PASSWORD` is `change-me`, which is exactly what it means
 Talks to a MariaDB container. It runs one operation per invocation, and the operation is
 named by a flag: `--create-user`, `--import` or `--truncate`. Passing two of them is an
 error rather than a guess. All three act on the database `--db_name` inside the container
-`--db_container`, and none of them read `sites.json`, so `db` can be pointed at a database
-that no site owns yet.
+`--db_container`, and none of them read a site's settings, so `db` can be pointed at a
+database that no site owns yet.
 
 A site is usually set up, and then reset, like this:
 
 ```sh
-./main db --create-user --db_container=wpdock-mariadb --db_name=blog --db_user=blog --db_password=change-me --root_password=change-me
-./main db --import      --db_container=wpdock-mariadb --db_name=blog --db_user=blog --db_password=change-me --sql_file=./blog.sql
+./main db --create-user --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --root_password=change-me
+./main db --import      --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --sql_file=./blog.sql
 
-./main db --truncate    --db_container=wpdock-mariadb --db_name=blog --db_user=blog --db_password=change-me --yes
-./main db --import      --db_container=wpdock-mariadb --db_name=blog --db_user=blog --db_password=change-me --sql_file=./blog.sql
+./main db --truncate    --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --yes
+./main db --import      --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --sql_file=./blog.sql
 ```
 
 #### db --create-user
@@ -174,7 +408,7 @@ Creates a MariaDB user that can reach one database and nothing else.
 | Flag | Required | Description |
 | --- | --- | --- |
 | `--create-user` | yes | The operation to run. |
-| `--db_container` | yes | The running MariaDB container to run the statements in, e.g. `wpdock-mariadb`. |
+| `--db_container` | yes | The running MariaDB container to run the statements in, e.g. `wpdock-mariadb-11`. |
 | `--db_name` | yes | The database the user is given access to. Created if it does not exist. |
 | `--db_user` | yes | The user to create. |
 | `--db_password` | yes | The password to give the user. |
@@ -191,11 +425,11 @@ created as `<user>@'%'`, because the client is another container rather than loc
 The database is created `utf8mb4` / `utf8mb4_unicode_ci`.
 
 ```sh
-./main db --create-user --db_container=wpdock-mariadb --db_name=blog --db_user=blog --db_password=change-me --root_password=change-me
+./main db --create-user --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --root_password=change-me
 ```
 
 ```
-db wpdock-mariadb
+db wpdock-mariadb-11
 
   database  blog
   user      blog@%
@@ -208,9 +442,9 @@ it and leaves the data alone.
 
 Creating a user is a `root` job, so this operation connects as `root` over the container's
 own socket with `--root_password`. That is the `MARIADB_ROOT_PASSWORD` the container was
-started with. `sites.json` does not carry it: a root password is the one secret in the
-stack that nothing but this operation needs, so it stays out of the file that describes
-every site and is passed on the command line, once, when a user is created.
+started with. wpdock never stores it: a root password is the one secret in the stack that
+nothing but this operation needs, so it stays off every site's labels and is passed on the
+command line, once, when a user is created.
 
 #### db --import
 
@@ -241,11 +475,11 @@ right place. A dump that names databases itself (`mysqldump --databases`, or one
 lines) will only work if it names `--db_name`, since the user may not touch any other.
 
 ```sh
-./main db --import --db_container=wpdock-mariadb --db_name=blog --db_user=blog --db_password=change-me --sql_file=./blog.sql
+./main db --import --db_container=wpdock-mariadb-11 --db_name=blog --db_user=blog --db_password=change-me --sql_file=./blog.sql
 ```
 
 ```
-db wpdock-mariadb
+db wpdock-mariadb-11
 
   database  blog
   user      blog@%
@@ -300,7 +534,7 @@ It prints what it is about to drop and asks first, in the way `install` does. `-
 the prompt, for scripts.
 
 ```
-db wpdock-mariadb
+db wpdock-mariadb-11
 
   database  blog
   user      blog@%
@@ -345,6 +579,8 @@ src/
   main.go               reads the command name and hands the rest of the args to it
   prefix/
     prefix.go           turns a --prefix into an absolute path, expanding a leading ~
+  prompt/
+    prompt.go           the shared [y/N] confirmation install, db and site-nuke ask
   commands/
     db/
       db.go             parses the db flags, picks the operation, checks the flags it needs
@@ -352,44 +588,29 @@ src/
       user.go           --create-user: the SQL that creates the user and grants it one database
       import.go         --import: streams a sql file in as that user
       truncate.go       --truncate: lists the database's tables, asks, drops them
-    deploy/
-      deploy.go         parses the deploy flags and picks the stack the site asked for
-      sites.go          reads sites.json and looks a site up by name
-      wp.go             the WordPress stack
-      php.go            the plain PHP stack
+      drop.go           DropDatabase, which site-nuke calls to drop a site's database
+    site/
+      site.go           the shared core: flags, docker exec, labels, images, vhosts, backups
+      add.go            site-add: runs the container, writes the vhost, reloads nginx
+      update.go         site-update: reads the labels back, applies changes, recreates
+      list.go           site-list: tabulates every wpdock.managed container
+      details.go        site-details: prints one site's labels, image and state
+      shell.go          site-shell: opens/closes an in-container ssh shell for a developer
+      wp.go             site-wp-list-users / site-wp-reset-password: WordPress user ops via php
+      stop.go           site-stop: stops the container
+      nuke.go           site-nuke: deletes the container, files, vhost and database
+      backup.go         site-backup: commits the image, archives the files, writes a manifest
+      restore.go        site-restore: rebuilds a site from a manifest, image and archive
     install/
       install.go        parses the install flags, prints the plan, asks, applies it
       layout.go         the tree install writes, and what --force may rewrite
       assets/           the files it writes, compiled into the binary with go:embed
 ```
 
-Every command exports two functions: `Run(args []string) error`, which does the
-work, and `Usage()`, which prints its own help text. `main.go` keeps a registry of
-them, so the top level help is built from the commands themselves.
+Every command exports its `Run`-style function (`Run`, or `Add`, `Stop`, …) and a matching
+`Usage`, which prints its own help text. `main.go` keeps a registry of them, so the top level
+help is built from the commands themselves.
 
-## Adding a stack
-
-Each stack in the `deploy` package implements the same interface:
-
-```go
-type Deployer interface {
-	Deploy(site string) error
-}
-```
-
-To add one, create a file next to `wp.go` and `php.go` with a type that implements
-`Deploy`, then register it in the `deployers` map in `deploy.go` under the name you
-want to write as a site's `stack` in `sites.json`.
-
-A stack that serves over nginx also needs a vhost template. Add it to
-`src/commands/install/assets/templates/`, list it in the `files` table in
-`install/layout.go`, and `install` will write it into `<prefix>/nginx/templates/`.
-The template is rendered with:
-
-| Field | Value |
-| --- | --- |
-| `.Name` | the site name, e.g. `blog` |
-| `.ServerName` | the `server_name` value, e.g. `blog.test` |
-| `.Root` | the site's docroot, `<prefix>/data/<name>` |
-| `.Prefix` | the install prefix |
-| `.PHP` | what to hand `.php` to, e.g. `unix:/run/php/php8.3-fpm.sock` |
+A site is described entirely by its flags, which `site-add` stores as `wpdock.*` labels on the
+container. `site-update`, `site-nuke`, `site-backup` and `site-restore` read them back with
+`docker inspect`, so the container is the single source of truth for how it was run.

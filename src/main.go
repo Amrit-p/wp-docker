@@ -6,8 +6,8 @@ import (
 	"sort"
 
 	"wpdock/src/commands/db"
-	"wpdock/src/commands/deploy"
 	"wpdock/src/commands/install"
+	"wpdock/src/commands/site"
 )
 
 type command struct {
@@ -16,9 +16,19 @@ type command struct {
 }
 
 var commands = map[string]command{
-	"db":      {run: db.Run, usage: db.Usage},
-	"deploy":  {run: deploy.Run, usage: deploy.Usage},
-	"install": {run: install.Run, usage: install.Usage},
+	"install":                {run: install.Run, usage: install.Usage},
+	"db":                     {run: db.Run, usage: db.Usage},
+	"site-add":               {run: site.Add, usage: site.AddUsage},
+	"site-update":            {run: site.Update, usage: site.UpdateUsage},
+	"site-list":              {run: site.List, usage: site.ListUsage},
+	"site-details":           {run: site.Details, usage: site.DetailsUsage},
+	"site-shell":             {run: site.Shell, usage: site.ShellUsage},
+	"site-wp-list-users":     {run: site.WPListUsers, usage: site.WPListUsersUsage},
+	"site-wp-reset-password": {run: site.WPResetPassword, usage: site.WPResetPasswordUsage},
+	"site-stop":              {run: site.Stop, usage: site.StopUsage},
+	"site-nuke":              {run: site.Nuke, usage: site.NukeUsage},
+	"site-backup":            {run: site.Backup, usage: site.BackupUsage},
+	"site-restore":           {run: site.Restore, usage: site.RestoreUsage},
 }
 
 func main() {

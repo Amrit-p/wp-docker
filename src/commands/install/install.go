@@ -1,27 +1,25 @@
 package install
 
 import (
-	"bufio"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
-	"strings"
 
 	"wpdock/src/prefix"
+	"wpdock/src/prompt"
 )
 
 func Usage() {
-	fmt.Fprint(os.Stderr, `  install --prefix=<path> [--force] [--yes]
-        create the wpdock tree (sites.json, data/, nginx/, www/) at <path>
+	fmt.Fprint(os.Stderr, `  install [--prefix=<path>] [--force] [--yes]
+        create the wpdock tree (docker-compose.yml, data/, backups/, nginx/, www/) at <path>
 `)
 }
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.Usage = Usage
-	dir := fs.String("prefix", "", "directory to install into")
+	dir := fs.String("prefix", ".", "directory to install into (default: current directory)")
 	force := fs.Bool("force", false, "rewrite generated files that already exist")
 	yes := fs.Bool("yes", false, "skip the confirmation prompt")
 
@@ -30,10 +28,6 @@ func Run(args []string) error {
 			return nil
 		}
 		return err
-	}
-
-	if *dir == "" {
-		return fmt.Errorf("install: --prefix is required")
 	}
 
 	root, err := prefix.Resolve(*dir)
@@ -61,9 +55,9 @@ func Run(args []string) error {
 	}
 
 	if !*yes {
-		ok, err := confirm()
+		ok, err := prompt.Confirm("proceed?")
 		if err != nil {
-			return err
+			return fmt.Errorf("install: %v", err)
 		}
 		if !ok {
 			return fmt.Errorf("install: cancelled")
@@ -76,19 +70,4 @@ func Run(args []string) error {
 
 	fmt.Printf("\ninstalled %s\n", root)
 	return nil
-}
-
-func confirm() (bool, error) {
-	fmt.Print("proceed? [y/N] ")
-
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, fmt.Errorf("install: %v", err)
-	}
-
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
-		return true, nil
-	}
-	return false, nil
 }

@@ -15,6 +15,7 @@ var assets embed.FS
 
 var dirs = []string{
 	"data",
+	"backups",
 	"nginx",
 	"nginx/conf",
 	"nginx/conf.d",
@@ -32,12 +33,10 @@ type file struct {
 }
 
 var files = []file{
-	{path: "sites.json", asset: "assets/sites.json", keep: true},
+	{path: "docker-compose.yml", asset: "assets/docker-compose.yml", render: true},
 	{path: "nginx/nginx.conf", asset: "assets/nginx.conf", render: true},
-	{path: "nginx/conf.d/fastcgi.conf", asset: "assets/conf.d/fastcgi.conf"},
 	{path: "nginx/conf.d/security.conf", asset: "assets/conf.d/security.conf"},
-	{path: "nginx/templates/wordpress.conf.tmpl", asset: "assets/templates/wordpress.conf.tmpl"},
-	{path: "nginx/templates/php.conf.tmpl", asset: "assets/templates/php.conf.tmpl"},
+	{path: "nginx/templates/site.conf.tmpl", asset: "assets/templates/site.conf.tmpl"},
 	{path: "www/index.html", asset: "assets/www/index.html", render: true},
 }
 

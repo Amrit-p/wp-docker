@@ -1,0 +1,27 @@
+{{/*
+  Rendered into <prefix>/nginx/conf/<name>.conf for every site, whatever its type.
+  nginx routes {{.ServerName}} here and proxies to the site's own container, which
+  runs Apache and serves both static files and PHP.
+  Edit this and every site deployed from now on picks up the change.
+
+    {{.Name}}        site name, e.g. blog
+    {{.ServerName}}  the server_name value, e.g. blog.com www.blog.com
+    {{.Upstream}}    the site's container, e.g. wpdock-blog
+    {{.Prefix}}      the install prefix
+*/ -}}
+# wpdock site: {{.Name}}
+
+server {
+    listen       80;
+    server_name  {{.ServerName}};
+
+    include {{.Prefix}}/nginx/conf.d/security.conf;
+
+    location / {
+        proxy_pass         http://{{.Upstream}};
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+}
