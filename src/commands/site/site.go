@@ -208,7 +208,7 @@ const sshDockerfile = `RUN set -eux; \
     apt-get install -y --no-install-recommends openssh-server sudo curl less; \
     rm -rf /var/lib/apt/lists/*; \
     mkdir -p /run/sshd; \
-    printf 'PasswordAuthentication yes\n' >> /etc/ssh/sshd_config; \
+    printf 'PasswordAuthentication yes\nPermitRootLogin yes\n' >> /etc/ssh/sshd_config; \
     curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar; \
     chmod +x /usr/local/bin/wp; \
     curl -fsSL https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer

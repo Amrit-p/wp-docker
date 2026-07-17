@@ -10,12 +10,18 @@ import (
 	"wpdock/src/commands/site"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 type command struct {
 	run   func(args []string) error
 	usage func()
 }
 
 var commands = map[string]command{
+	"version":                {run: versionCmd, usage: versionUsage},
 	"install":                {run: install.Run, usage: install.Usage},
 	"db":                     {run: db.Run, usage: db.Usage},
 	"ssl":                    {run: site.SSL, usage: site.SSLUsage},
@@ -31,6 +37,17 @@ var commands = map[string]command{
 	"site-nuke":              {run: site.Nuke, usage: site.NukeUsage},
 	"site-backup":            {run: site.Backup, usage: site.BackupUsage},
 	"site-restore":           {run: site.Restore, usage: site.RestoreUsage},
+}
+
+func versionCmd(args []string) error {
+	fmt.Printf("wpdock %s %s\n", version, commit)
+	return nil
+}
+
+func versionUsage() {
+	fmt.Fprint(os.Stderr, `  version
+        print the version and commit this binary was built from
+`)
 }
 
 func main() {

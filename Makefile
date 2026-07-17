@@ -1,7 +1,7 @@
 .PHONY: build install up down restart logs add-site set-aliases teardown-all ssl install-renewal-cron backup reset-password list-users stop details lint version bump
 
 PREFIX ?= .
-WPDOCK ?= ./main
+WPDOCK ?= wp-dock
 COMPOSE = docker compose -f $(PREFIX)/docker-compose.yml
 
 -include $(PREFIX)/.env
@@ -40,7 +40,7 @@ bump:
 	echo "$$current -> $$new"
 
 build:
-	go build -o main ./src
+	go build -ldflags "-X main.version=$$(cat VERSION) -X main.commit=$$(git rev-parse HEAD)" -o main ./src
 
 install:
 	$(WPDOCK) install --prefix="$(PREFIX)" $(if $(FORCE),--force) $(if $(YES),--yes)
