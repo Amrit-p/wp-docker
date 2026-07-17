@@ -10,7 +10,7 @@ for c in $(docker ps --filter label=wpdock.managed=true --format '{{.Names}}' | 
   d=$(docker inspect -f '{{index .Config.Labels "wpdock.domain"}}' "$c")
   [ -f "certs/renewal/$d.conf" ] && { echo "== $name: certificate exists"; continue; }
   echo "== ssl for $name ($d)"
-  ./main ssl --name="$name" --email="$EMAIL" || { echo "== FAILED: $name"; fail=$((fail+1)); }
+  wp-dock ssl --name="$name" --email="$EMAIL" || { echo "== FAILED: $name"; fail=$((fail+1)); }
 done
 
 echo

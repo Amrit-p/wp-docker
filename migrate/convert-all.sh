@@ -10,7 +10,7 @@ for name in $(ls "$OLD/sites"); do
   docker inspect "wpdock-$name" >/dev/null 2>&1 && { echo "== $name: already converted"; continue; }
   docker ps -q -f "name=^wp_$name$" | grep -q . || { echo "== $name: old container not running - skipped"; continue; }
   echo "== converting $name"
-  ./main site-convert --old-prefix="$OLD" --name="$name" --root-password="$PASS" --yes || echo "== FAILED: $name"
+  wp-dock site-convert --old-prefix="$OLD" --name="$name" --root-password="$PASS" --yes || echo "== FAILED: $name"
 done 2>&1 | tee convert.log
 
 echo
