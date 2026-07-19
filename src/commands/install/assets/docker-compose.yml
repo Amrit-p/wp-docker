@@ -14,6 +14,11 @@
 # loads it automatically). `wpdock install` writes a .env from .env.example on first run;
 # edit it before first start. WPDOCK_MARIADB_PORT publishes MariaDB on the host at
 # 127.0.0.1:<port> (default 3307, so an old stack's MariaDB can keep 3306).
+#
+# `name` pins the compose project, so the wpdock-mariadb-data volume keeps the same real
+# name if this directory is moved or renamed. `wpdock relocate` preserves it across a move.
+
+name: {{.Project}}
 
 services:
   wpdock-nginx-1.27:

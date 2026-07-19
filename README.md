@@ -78,6 +78,46 @@ Everything here is regenerated from the binary, so `--force` overwrites local ed
 `certs/` hold your sites, and `.env` holds your settings — those are only ever added to,
 never rewritten.
 
+### relocate
+
+Moves an install to a new directory — or repairs one in place — and re-points everything
+that stored the old absolute path at the new one.
+
+```sh
+./main relocate --prefix=<current> --to=<new> [--yes]   # move, then fix everything
+./main relocate --prefix=<dir> [--yes]                   # repair in place (e.g. after a manual mv)
+```
+
+The prefix is baked as an absolute path in several places, so a bare `mv` breaks the stack:
+`docker-compose.yml` (the proxy mounts `<prefix>:<prefix>` and runs `nginx -c <prefix>/...`),
+`nginx.conf` (log, tmp, `www` and the `conf/*.conf` include), every site's vhost, and — because
+a container stores its bind mount as an absolute path — every site container's
+`<prefix>/data/<name>` mount. `relocate` walks all of it:
+
+1. `os.Rename` the directory to `--to` (skipped when repairing in place, or when `--to` equals `--prefix`).
+2. Rewrite the three generated files that embed the absolute path — `docker-compose.yml`,
+   `nginx.conf` and `www/index.html` — for the new location. `security.conf` and the vhost
+   templates hold no absolute path and are left untouched, so edits to them survive.
+3. For every `wpdock.managed=true` container: recreate it against the new `data/<name>` mount
+   (reusing its exact current image, so an ssh-augmented image is kept) and rewrite its vhost.
+4. `docker compose up -d` to recreate the proxy at the new path. MariaDB is left running.
+
+**The MariaDB data volume is why this is not just a `mv`.** A named volume's real name is
+prefixed by the compose *project*, which defaults to the install directory's basename — so
+renaming the directory would point a bare `docker compose up` at a new, empty volume and the
+databases would seem to vanish. To prevent that, the compose file now pins the project with a
+top-level `name:`, and `relocate` reads the *current* project from the running
+`wpdock-mariadb-11` (or the `wpdock.role=proxy` proxy) and writes that same name into the moved
+compose file. The volume (`<project>_wpdock-mariadb-data`) is reused, and future bare
+`docker compose -f <new>/docker-compose.yml up -d` keep resolving to it.
+
+Caveats: recreating a site container starts it, so a site you had `site-stop`ped comes back up;
+`os.Rename` cannot cross filesystems, so for a move to another disk, `mv` by hand first and then
+`relocate --prefix=<newpath>` to repair in place; and it assumes the one shared stack this tool
+installs (fixed container names), not several on one host. Certificates need nothing — certbot
+always mounts `<prefix>/certs` at the fixed `/etc/letsencrypt`, so renewal configs never store
+the host path.
+
 ## Shared containers
 
 The `site-*` and `db` commands rely on two long-lived containers on a Docker network named
@@ -86,7 +126,7 @@ The `site-*` and `db` commands rely on two long-lived containers on a Docker net
 | Container | Role |
 | --- | --- |
 | `wpdock-nginx-1.27` | The reverse proxy on ports 80 and 443. The compose file runs the official `nginx` image with `<prefix>` mounted at the same path (so the absolute paths in `nginx.conf` resolve) via `nginx -c <prefix>/nginx/nginx.conf`. It serves `nginx.conf` and picks up the vhosts `site-add` writes into `conf/`. To apply a new vhost, `site-add` finds the proxy by its `wpdock.role=proxy` label — not its name, so the nginx version can change freely — and sends it `SIGHUP` (`docker kill --signal=HUP`), which the nginx master turns into a graceful reload. |
-| `wpdock-mariadb-11` | The shared database. `db --create-user` provisions a database and user in it; each site connects to it with `--db-host=wpdock-mariadb-11`. Its data persists in the `wpdock-mariadb-data` volume. |
+| `wpdock-mariadb-11` | The shared database. `db --create-user` provisions a database and user in it; each site connects to it with `--db-host=wpdock-mariadb-11`. Its data persists in a named volume, `<project>_wpdock-mariadb-data`, where `<project>` is the top-level `name:` in the compose file (pinned so a moved directory keeps the same volume — see [relocate](#relocate)). |
 
 Bring them up once, from anywhere:
 
@@ -883,6 +923,7 @@ src/
       site.go           the shared core: flags, docker exec, labels, images, vhosts, backups
       add.go            site-add: runs the container, writes the vhost, reloads nginx
       convert.go        site-convert: copies a site off the old make/bash stack into wpdock
+      relocate.go       relocate: moves/repairs an install and re-points the stack, sites and vhosts
       ssl.go            ssl: obtains a Let's Encrypt certificate and switches the vhost to https
       update.go         site-update: reads the labels back, applies changes, recreates
       list.go           site-list: tabulates every wpdock.managed container

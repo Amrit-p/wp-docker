@@ -45,7 +45,7 @@ var files = []file{
 	{path: "www/index.html", asset: "assets/www/index.html", render: true},
 }
 
-func (f file) content(root string) ([]byte, error) {
+func (f file) content(root, project string) ([]byte, error) {
 	b, err := assets.ReadFile(f.asset)
 	if err != nil {
 		return nil, err
@@ -60,7 +60,7 @@ func (f file) content(root string) ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, struct{ Root string }{root}); err != nil {
+	if err := t.Execute(&buf, struct{ Root, Project string }{root, project}); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -128,7 +128,7 @@ func (s steps) writes() bool {
 	return false
 }
 
-func (s steps) apply(root string) error {
+func (s steps) apply(root, project string) error {
 	for _, st := range s {
 		if st.act == skip {
 			continue
@@ -143,7 +143,7 @@ func (s steps) apply(root string) error {
 			continue
 		}
 
-		b, err := st.file.content(root)
+		b, err := st.file.content(root, project)
 		if err != nil {
 			return fmt.Errorf("install: %s: %v", st.name, err)
 		}
@@ -160,4 +160,24 @@ func (s steps) apply(root string) error {
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return !errors.Is(err, os.ErrNotExist)
+}
+
+func Rerender(root, project string) error {
+	for _, f := range files {
+		if !f.render {
+			continue
+		}
+		b, err := f.content(root, project)
+		if err != nil {
+			return fmt.Errorf("install: %s: %v", f.path, err)
+		}
+		path := filepath.Join(root, f.path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("install: %v", err)
+		}
+		if err := os.WriteFile(path, b, 0o644); err != nil {
+			return fmt.Errorf("install: %v", err)
+		}
+	}
+	return nil
 }

@@ -64,7 +64,7 @@ func Run(args []string) error {
 		}
 	}
 
-	if err := steps.apply(root); err != nil {
+	if err := steps.apply(root, prefix.Project(root)); err != nil {
 		return err
 	}
 
