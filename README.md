@@ -70,7 +70,7 @@ safe: without `--force` every file that already exists is skipped.
       site-ssl.conf.tmpl         the vhost a site renders once `ssl` has its certificate
     logs/                        nginx error, access and pid files
     tmp/                         nginx client body, proxy and fastcgi temp files
-  www/                           shared webroot, holds the default page
+  www/                           webroot for certbot's ACME challenges; the default server serves no page (returns 444 for unmatched hosts)
 ```
 
 Everything here is regenerated from the binary, so `--force` overwrites local edits to
