@@ -1,5 +1,4 @@
 #!/bin/sh
-cd "$(dirname "$0")/.." || exit 1
 
 PASS="$1"
 OLD="${2:-$HOME/wp-stack-docker}"

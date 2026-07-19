@@ -1,5 +1,4 @@
 #!/bin/sh
-cd "$(dirname "$0")/.." || exit 1
 
 EMAIL="$1"
 [ -n "$EMAIL" ] || { echo "usage: bash migrate/ssl-all.sh you@example.com"; exit 1; }

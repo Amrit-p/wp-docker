@@ -1,5 +1,4 @@
 #!/bin/sh
-cd "$(dirname "$0")/.." || exit 1
 
 PORT="${1:-8080}"
 bad=0
