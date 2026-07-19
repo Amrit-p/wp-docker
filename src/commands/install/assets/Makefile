@@ -1,4 +1,4 @@
-.PHONY: build install up down restart logs add-site set-aliases teardown-all ssl install-renewal-cron backup restore-site reset-password list-users stop details lint version bump
+.PHONY: install up down restart logs add-site set-aliases teardown-all ssl install-renewal-cron backup restore-site reset-password list-users stop details
 
 PREFIX ?= .
 WPDOCK ?= wp-dock
@@ -24,25 +24,6 @@ PHP_VER = $(if $(PHP_VERSION),$(PHP_VERSION),$(WPDOCK_PHP_VERSION))
 WP_VER = $(if $(WP_VERSION),$(WP_VERSION),$(WPDOCK_WP_VERSION))
 ZIP_PATH = $(if $(ZIP),$(ZIP),$(HOME)/websites/$(NAME)/$(NAME).zip)
 SQL_PATH = $(if $(SQL),$(SQL),$(HOME)/websites/$(NAME)/$(NAME).sql)
-
-version:
-	@cat VERSION
-
-bump:
-	@[ -n "$(PART)" ] || (echo "PART is required: make bump PART=major|minor|patch" && exit 1)
-	@current=$$(cat VERSION); \
-	major=$${current%%.*}; rest=$${current#*.}; minor=$${rest%%.*}; patch=$${rest#*.}; \
-	case "$(PART)" in \
-		major) new="$$((major + 1)).0.0" ;; \
-		minor) new="$$major.$$((minor + 1)).0" ;; \
-		patch) new="$$major.$$minor.$$((patch + 1))" ;; \
-		*) echo "Invalid PART '$(PART)': expected major, minor, or patch" && exit 1 ;; \
-	esac; \
-	echo "$$new" > VERSION; \
-	echo "$$current -> $$new"
-
-build:
-	go build -ldflags "-X main.version=$$(cat VERSION) -X main.commit=$$(git rev-parse HEAD)" -o main ./src
 
 install:
 	$(WPDOCK) install --prefix="$(PREFIX)" $(if $(FORCE),--force) $(if $(YES),--yes)
@@ -140,7 +121,3 @@ stop:
 details:
 	@[ -n "$(NAME)" ] || (echo "NAME is required: make details NAME=site1" && exit 1)
 	$(WPDOCK) site-details --name="$(NAME)"
-
-lint:
-	@test -z "$$(gofmt -l src)" || (gofmt -l src && exit 1)
-	go vet ./...

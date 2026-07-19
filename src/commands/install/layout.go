@@ -34,6 +34,7 @@ type file struct {
 }
 
 var files = []file{
+	{path: "Makefile", asset: "assets/Makefile"},
 	{path: "docker-compose.yml", asset: "assets/docker-compose.yml", render: true},
 	{path: ".env.example", asset: "assets/env.example"},
 	{path: ".env", asset: "assets/env.example", keep: true},

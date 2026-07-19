@@ -52,6 +52,7 @@ safe: without `--force` every file that already exists is skipped.
 
 ```
 <prefix>/
+  Makefile                       operational targets (make add-site, ssl, backup, …) that wrap the binary
   docker-compose.yml             the shared nginx + mariadb services, on the wpdock network
   .env                           the values docker-compose.yml and the Makefile read; created once, never rewritten
   .env.example                   the reference copy of .env, kept current by --force
@@ -793,7 +794,8 @@ them from a variable rather than typing them literally.
 ## Makefile
 
 The Makefile wraps the binary with the old make/bash stack's target names and parameters, so
-muscle memory (and any automation calling `make`) keeps working. Each target it carries takes
+muscle memory (and any automation calling `make`) keeps working. `install` writes it into the
+install tree, so its targets sit next to your sites. Each target it carries takes
 the old parameters unchanged — new ones were only added, none removed. Parameters are
 case-sensitive, exactly as before: `NAME=`, not `name=`. Anything without a target here
 (`site-convert`, `site-nuke`, `site-restore`, `site-update`, `site-list`, `ssl --renew`, …)
@@ -804,12 +806,11 @@ Two variables aim it:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PREFIX` | `.` | The install tree (`make install PREFIX=...` creates it). All targets read `$(PREFIX)/.env` for defaults. |
-| `WPDOCK` | `./main` | The binary to run, as built by `make build`. |
+| `WPDOCK` | `wp-dock` | The binary the targets invoke; expected on your `PATH`. From a source checkout, override it with `WPDOCK=./main`. |
 
 | Target | Parameters | What it runs |
 | --- | --- | --- |
-| `build` | | `go build -o main ./src` |
-| `install` | `[FORCE=1] [YES=1]` | `install` — writes the tree, `docker-compose.yml`, `.env` and `.env.example` at `PREFIX` |
+| `install` | `[FORCE=1] [YES=1]` | `install` — writes the tree, `Makefile`, `docker-compose.yml`, `.env` and `.env.example` at `PREFIX` |
 | `up` / `down` / `restart` / `logs` | | `docker compose -f $(PREFIX)/docker-compose.yml ...` |
 | `add-site` | `NAME= DOMAIN= [ALIASES="a b"] [TYPE=wp\|php] [DB=default\|<version>] [PHP_VERSION=] [WP_VERSION=] [MEMORY=] [CPUS=] [PIDS=]` | for `wp`: `db --create-user` (database and user `wp_<name>`, random password) then `site-add`; for `php`: `site-add` alone |
 | `set-aliases` | `NAME= [ALIASES="a b"]` | `site-update --aliases=...`; empty `ALIASES` clears them; reminds you to rerun `make ssl` if the site has a certificate |
@@ -822,8 +823,6 @@ Two variables aim it:
 | `list-users` | `NAME=` | `site-wp-list-users` |
 | `stop` | `NAME=` | `site-stop` |
 | `details` | `NAME=` | `site-details` |
-| `lint` | | `gofmt -l src` and `go vet ./...` |
-| `version` / `bump` | `[PART=major\|minor\|patch]` | prints or increments the `VERSION` file |
 
 What behaves differently from the old stack:
 
