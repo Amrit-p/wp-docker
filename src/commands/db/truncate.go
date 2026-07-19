@@ -7,6 +7,28 @@ import (
 	"wpdock/src/prompt"
 )
 
+func TruncateAll(container, name, user, password string) error {
+	if err := checkIdent("--db-name", name, 64); err != nil {
+		return err
+	}
+	if err := checkIdent("--db-user", user, 80); err != nil {
+		return err
+	}
+
+	as := login{container: container, user: user, password: password}
+
+	rows, err := as.query(name, fmt.Sprintf("SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = %s ORDER BY table_name;", quoteString(name)))
+	if err != nil {
+		return err
+	}
+
+	tables, views := split(rows)
+	if len(tables)+len(views) == 0 {
+		return nil
+	}
+	return as.exec(strings.NewReader(drops(tables, views)), nil, name)
+}
+
 func truncate(container, name, user, password string, yes bool) error {
 	if err := checkIdent("--db-name", name, 64); err != nil {
 		return err

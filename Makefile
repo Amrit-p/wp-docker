@@ -1,4 +1,4 @@
-.PHONY: build install up down restart logs add-site set-aliases teardown-all ssl install-renewal-cron backup reset-password list-users stop details lint version bump
+.PHONY: build install up down restart logs add-site set-aliases teardown-all ssl install-renewal-cron backup restore-site reset-password list-users stop details lint version bump
 
 PREFIX ?= .
 WPDOCK ?= wp-dock
@@ -22,6 +22,8 @@ DB_HOST = $(if $(filter default,$(DB)),wpdock-mariadb-11,wpdock-mariadb-$(DB))
 DB_NAME = wp_$(subst -,_,$(NAME))
 PHP_VER = $(if $(PHP_VERSION),$(PHP_VERSION),$(WPDOCK_PHP_VERSION))
 WP_VER = $(if $(WP_VERSION),$(WP_VERSION),$(WPDOCK_WP_VERSION))
+ZIP_PATH = $(if $(ZIP),$(ZIP),$(HOME)/websites/$(NAME)/$(NAME).zip)
+SQL_PATH = $(if $(SQL),$(SQL),$(HOME)/websites/$(NAME)/$(NAME).sql)
 
 version:
 	@cat VERSION
@@ -113,6 +115,14 @@ install-renewal-cron:
 backup:
 	@[ -n "$(NAME)" ] || (echo "NAME is required: make backup NAME=site1" && exit 1)
 	$(WPDOCK) site-backup --prefix="$(PREFIX)" --name="$(NAME)"
+
+restore-site:
+	@[ -z "$(name)$(zip)$(sql)$(force)" ] || \
+		(echo "make parameters are case-sensitive - use NAME= ZIP= SQL= FORCE=" && exit 1)
+	@[ -n "$(NAME)" ] || (echo "NAME is required: make restore-site NAME=site1 [ZIP=path] [SQL=path] [FORCE=y]" && exit 1)
+	$(WPDOCK) site-extract --prefix="$(PREFIX)" --name="$(NAME)" \
+		--zip_path="$(ZIP_PATH)" --sql_path="$(SQL_PATH)" \
+		$(if $(FORCE),--force="$(FORCE)")
 
 reset-password:
 	@[ -n "$(NAME)" ] || (echo "NAME is required: make reset-password NAME=site1 PASSWORD=newpass [USER=admin]" && exit 1)

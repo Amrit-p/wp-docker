@@ -37,6 +37,7 @@ var commands = map[string]command{
 	"site-nuke":              {run: site.Nuke, usage: site.NukeUsage},
 	"site-backup":            {run: site.Backup, usage: site.BackupUsage},
 	"site-restore":           {run: site.Restore, usage: site.RestoreUsage},
+	"site-extract":           {run: site.Extract, usage: site.ExtractUsage},
 }
 
 func versionCmd(args []string) error {

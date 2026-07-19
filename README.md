@@ -523,6 +523,38 @@ vhost. The database is not part of a backup and is left as it is.
 ./main site-restore --prefix=~/wpdock --backupID=blog-20260715-203000
 ```
 
+### site-extract
+
+Replaces an existing site's files and database from a zip and a sql dump. The site must
+already exist — create it with `site-add` first — and `site-extract` overwrites what is there;
+it does not build a container or set up routing.
+
+```sh
+./main site-extract --prefix=<path> --name=<site> --zip_path=<zip> --sql_path=<sql> [--force=y]
+```
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--prefix` | no | The wpdock installation directory (default: the current directory). |
+| `--name` | yes | The site to replace, as `site-add` created it. |
+| `--zip_path` | yes | The zip whose contents become the docroot. |
+| `--sql_path` | with database | The sql dump loaded into the site's database. Required for a site with a database; a `php` site with none takes only the zip and ignores it. |
+| `--force` | no | `y` skips the confirmation prompt. |
+
+The paths have no defaults: pass both, or use `make restore-site`, which fills them in from
+`~/websites/<name>/<name>.zip` and `.sql`. The zip's contents are the docroot: `wp-config.php`
+and `wp-content/` sit at the top level of the zip, not inside a wrapping folder. `site-extract`
+reads the site's labels for its database and checks both sources exist before anything is
+touched, prints what it will overwrite and asks to confirm, then drops every table in the
+database and loads the dump, clears `data/<name>` and unpacks the zip into it as the container's
+`www-data` (uid 33), and restarts the container. A `php` site with no database replaces only its
+files. The container image, the routing and any certificate are left as they are.
+
+```sh
+./main site-extract --prefix=~/wpdock --name=blog \
+  --zip_path=~/websites/blog/blog.zip --sql_path=~/websites/blog/blog.sql --force=y
+```
+
 ### site-wp-list-users
 
 Lists the WordPress users (the `wp_users` table) of a site.
@@ -785,6 +817,7 @@ Two variables aim it:
 | `ssl` | `NAME= [EMAIL=] [STAGING=1]` | `ssl` — `EMAIL` falls back to `WPDOCK_LETSENCRYPT_EMAIL` in `.env` |
 | `install-renewal-cron` | `[SCHEDULE='0 3 * * *']` | replaces its own crontab line (tagged `wpdock-renew-ssl`) with one running `ssl --renew` |
 | `backup` | `NAME=` | `site-backup` |
+| `restore-site` | `NAME= [ZIP=path] [SQL=path] [FORCE=y]` | `site-extract` — `ZIP`/`SQL` default to `~/websites/<name>/<name>.zip` and `.sql`; `FORCE=y` skips the prompt |
 | `reset-password` | `NAME= PASSWORD= [USER=]` | `site-wp-reset-password` — with no `USER=`, the first administrator |
 | `list-users` | `NAME=` | `site-wp-list-users` |
 | `stop` | `NAME=` | `site-stop` |
@@ -832,7 +865,7 @@ src/
       mariadb.go        the docker exec that pipes SQL into the container's mariadb client
       user.go           --create-user: the SQL that creates the user and grants it one database
       import.go         --import: streams a sql file in as that user
-      truncate.go       --truncate: lists the database's tables, asks, drops them
+      truncate.go       --truncate: lists the database's tables, asks, drops them; TruncateAll for site-extract
       drop.go           DropDatabase, which site-nuke calls to drop a site's database
     site/
       site.go           the shared core: flags, docker exec, labels, images, vhosts, backups
@@ -848,6 +881,7 @@ src/
       nuke.go           site-nuke: deletes the container, files, vhost and database
       backup.go         site-backup: commits the image, archives the files, writes a manifest
       restore.go        site-restore: rebuilds a site from a manifest, image and archive
+      extract.go        site-extract: replaces a site's files and database from a zip and sql dump
     install/
       install.go        parses the install flags, prints the plan, asks, applies it
       layout.go         the tree install writes, and what --force may rewrite
