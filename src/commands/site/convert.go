@@ -15,7 +15,7 @@ import (
 )
 
 func ConvertUsage() {
-	fmt.Fprint(os.Stderr, `  site-convert --prefix=<path> --old-prefix=<path> --name=<site> --root-password=<pass> [--type=wp|php] [--yes]
+	fmt.Fprint(os.Stderr, `  site-convert --prefix=<path> --old-prefix=<path> --name=<site> --root-password=<pass> [--type=wp|php] [--runtime=fpm|apache] [--yes]
         copy a site off the old make/bash stack into wpdock: files, database and routing
 `)
 }
@@ -34,6 +34,7 @@ func convert(args []string) error {
 	dbHost := fs.String("db-host", "wpdock-mariadb-11", "wpdock mariadb container that receives the database")
 	rootPass := fs.String("root-password", "", "mariadb root password of --db-host, which creates the database and user")
 	typ := fs.String("type", "", "override the wp.type read from the old container (wp or php)")
+	runtime := fs.String("runtime", "fpm", "php runtime of the new container: fpm (nginx + php-fpm on alpine) or apache")
 	domain := fs.String("domain", "", "override the domain read from the old container's wp.domain label")
 	aliases := fs.String("aliases", "", "override the aliases read back from the old vhost (comma-separated)")
 	mem := fs.String("memory", "512m", "memory cap of the new container (default 512m)")
@@ -70,6 +71,7 @@ func convert(args []string) error {
 		return err
 	}
 	c.DBHost = *dbHost
+	c.Runtime = *runtime
 	c.Memory = *mem
 	c.CPU = *cpu
 	c.PIDs = *pids
@@ -213,20 +215,25 @@ func convertImage(c *Config) (string, error) {
 		return img, nil
 	}
 
+	suffix := "apache"
+	if c.fpm() {
+		suffix = "fpm-alpine"
+	}
+
 	versions := []string{c.Version}
 	if mm := majorMinor(c.Version); mm != "" {
 		versions = append(versions, mm)
 	}
 	var tried []string
 	for _, v := range versions {
-		tag := fmt.Sprintf("wordpress:%s-php%s-apache", v, c.PHP)
+		tag := fmt.Sprintf("wordpress:%s-php%s-%s", v, c.PHP, suffix)
 		if ensureImage(tag) == nil {
 			c.Version = v
 			return tag, nil
 		}
 		tried = append(tried, tag)
 	}
-	tag := fmt.Sprintf("wordpress:php%s-apache", c.PHP)
+	tag := fmt.Sprintf("wordpress:php%s-%s", c.PHP, suffix)
 	if ensureImage(tag) == nil {
 		if v, err := imageWPVersion(tag); err == nil && v != "" {
 			c.Version = v
@@ -409,11 +416,17 @@ func dumpDatabase(container, name, user, password, out string) error {
 
 // copyDocroot copies the old webroot into <prefix>/data/<name> inside a root
 // helper container, since the files are owned by the old container's users.
-// Ownership moves from Alpine's www-data (82) to Debian's (33), which is who
-// runs in the wordpress/php apache images. A wp site also gets the standard
-// WordPress .htaccess if it has none: the old stack's nginx did the rewriting,
-// so the files won't have one, and without it Apache 404s pretty permalinks.
+// Ownership is set to the uid the new container serves as, replacing the old
+// owners: Debian's www-data (33) for the apache image, Alpine's (82) for fpm.
+// A wp site also gets the standard WordPress .htaccess if it has none: the old
+// stack's nginx did the rewriting, so the files won't have one, and without it
+// an apache-runtime site 404s pretty permalinks (an fpm site's nginx rewrites
+// for it, so there the file is inert).
 func copyDocroot(root, webroot string, c *Config) error {
+	uid := "33"
+	if c.fpm() {
+		uid = "82"
+	}
 	var sh strings.Builder
 	fmt.Fprintf(&sh, "set -e\nmkdir -p /data/%[1]s\ncp -a /src/. /data/%[1]s/\n", c.Name)
 	if c.Type == "wordpress" {
@@ -433,7 +446,7 @@ EOF
 fi
 `, c.Name)
 	}
-	fmt.Fprintf(&sh, "chown -R 33:33 /data/%s\n", c.Name)
+	fmt.Fprintf(&sh, "chown -R %s:%s /data/%s\n", uid, uid, c.Name)
 
 	return helper(root, []string{"-v", webroot + ":/src:ro"}, sh.String())
 }

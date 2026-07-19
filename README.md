@@ -240,7 +240,7 @@ of) into wpdock: its files, its database and its routing.
 
 ```sh
 ./main site-convert --prefix=<path> --old-prefix=<path> --name=<site> --root-password=<pass> \
-  [--db-host=<h>] [--aliases=<d,d>] [--wp-version=<v>] [--php-version=<v>] [--yes]
+  [--db-host=<h>] [--runtime=<fpm|apache>] [--aliases=<d,d>] [--wp-version=<v>] [--php-version=<v>] [--yes]
 ```
 
 | Flag | Required | Description |
@@ -250,6 +250,7 @@ of) into wpdock: its files, its database and its routing.
 | `--name` | yes | The site, named as the old stack knows it (container `wp_<name>`, files `sites/<name>/`). |
 | `--root-password` | yes | The MariaDB root password of `--db-host`, which creates the database and user there. |
 | `--db-host` | no | The wpdock MariaDB container that receives the database. Default `wpdock-mariadb-11`. |
+| `--runtime` | no | `fpm` (default) or `apache` — the runtime of the new container, independent of what the old one ran. `fpm` gives the `-fpm-alpine` image with the shared nginx serving statics and passing PHP to php-fpm; `apache` gives the `-apache` image reverse-proxied over HTTP. The old wp-stack ran `-fpm-alpine`, so the default is the like-for-like move. |
 | `--type` | no | Override the `wp.type` label (`wp` or `php`). Old-stack containers from before that label carry none; without the flag the type is inferred from the container's `WORDPRESS_DB_NAME` env, then from whether `sites/<name>/wordpress` or `sites/<name>/app` exists. |
 | `--domain` | no | Override the domain read from the old container's `wp.domain` label; required if that label is missing. |
 | `--aliases` | no | Override the aliases read back from the old vhost's `# Aliases:` header (comma-separated). |
@@ -268,9 +269,10 @@ container gets wpdock's defaults (or the flags above), not the old caps.
 
 Docker Hub never built an image for every version pair a site can report — security backports
 like WordPress 6.1.10 have no image at all, and `php7.4` variants stopped being published in
-2023. So convert resolves the detected pair to a tag that exists, pulling it as the proof:
-first `wordpress:<wp>-php<php>-apache` exactly, then the `<major.minor>` tag
-(`wordpress:6.1-php7.4-apache`), then the bare `wordpress:php<php>-apache` variant. Falling
+2023. So convert resolves the detected pair to a tag that exists, pulling it as the proof. The
+image suffix follows `--runtime` — `-fpm-alpine` by default, `-apache` with `--runtime=apache`:
+first `wordpress:<wp>-php<php>-<suffix>` exactly, then the `<major.minor>` tag
+(`wordpress:6.1-php7.4-fpm-alpine`), then the bare `wordpress:php<php>-<suffix>` variant. Falling
 back is safe because the image's bundled WordPress is never used — the entrypoint only unpacks
 it into an *empty* docroot, and the old site's files are copied in first; the image supplies
 PHP, Apache and the extensions, nothing more. The site's `wpdock.version` label follows
@@ -282,10 +284,12 @@ container and image, files, database move — plus warnings, and asks before doi
 Then it: dumps the old database (as the site's own user, from whichever MariaDB server the old
 site was on, extra `add-db` servers included), creates the same database, user and password on
 `--db-host` and imports the dump; copies `sites/<name>/wordpress` (or `app/`) into
-`data/<name>`, rechowning from Alpine's `www-data` (82) to Debian's (33) and dropping in the
-standard WordPress `.htaccess` if the files have none — the old nginx did the rewriting, so
-they won't, and without it Apache 404s every pretty permalink; and starts the wpdock container
-and writes the vhost.
+`data/<name>`, rechowning them to the uid the new container serves as — Debian's `www-data`
+(33) for the apache image, Alpine's (82) for fpm — and dropping in the standard WordPress
+`.htaccess` if the files have none. The old nginx did the URL rewriting, so the files won't
+carry an `.htaccess`, and an apache-runtime site 404s every pretty permalink without one; an
+fpm site's shared nginx rewrites for it, so there the file is inert. Then it starts the wpdock
+container and writes the vhost.
 
 The old site is not touched: it keeps running and keeps serving until you cut over. That also
 means the copy diverges from the moment it is made — convert close to the cutover, or convert
