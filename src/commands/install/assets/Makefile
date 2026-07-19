@@ -41,8 +41,8 @@ logs:
 	$(COMPOSE) logs -f
 
 add-site:
-	@[ -z "$(name)$(domain)$(aliases)$(type)$(db)$(php_version)$(wp_version)$(memory)$(cpus)$(pids)" ] || \
-		(echo "make parameters are case-sensitive - use NAME= DOMAIN= ALIASES= TYPE= DB= PHP_VERSION= WP_VERSION= MEMORY= CPUS= PIDS=" && exit 1)
+	@[ -z "$(name)$(domain)$(aliases)$(type)$(runtime)$(db)$(php_version)$(wp_version)$(memory)$(cpus)$(pids)" ] || \
+		(echo "make parameters are case-sensitive - use NAME= DOMAIN= ALIASES= TYPE= RUNTIME= DB= PHP_VERSION= WP_VERSION= MEMORY= CPUS= PIDS=" && exit 1)
 	@[ -n "$(NAME)" ] || (echo "NAME is required: make add-site NAME=site1 DOMAIN=site1.example.com" && exit 1)
 	@[ -n "$(DOMAIN)" ] || (echo "DOMAIN is required: make add-site NAME=site1 DOMAIN=site1.example.com" && exit 1)
 	@set -e; \
@@ -50,13 +50,13 @@ add-site:
 		pass=$$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24); \
 		$(WPDOCK) db --create-user --db-container="$(DB_HOST)" --db-name="$(DB_NAME)" --db-user="$(DB_NAME)" --db-password="$$pass" --root-password="$(WPDOCK_MARIADB_ROOT_PASSWORD)"; \
 		$(WPDOCK) site-add --prefix="$(PREFIX)" --name="$(NAME)" --domain="$(DOMAIN)" --type=wordpress \
-			$(if $(ALIASES),--aliases="$(ALIASES_CSV)") \
+			$(if $(ALIASES),--aliases="$(ALIASES_CSV)") $(if $(RUNTIME),--runtime="$(RUNTIME)") \
 			--wp-version="$(WP_VER)" --php-version="$(PHP_VER)" \
 			$(if $(MEMORY),--memory="$(MEMORY)") $(if $(CPUS),--cpu="$(CPUS)") $(if $(PIDS),--pids="$(PIDS)") \
 			--db-host="$(DB_HOST)" --db-name="$(DB_NAME)" --db-user="$(DB_NAME)" --db-password="$$pass"; \
 	else \
 		$(WPDOCK) site-add --prefix="$(PREFIX)" --name="$(NAME)" --domain="$(DOMAIN)" --type="$(SITE_TYPE)" \
-			$(if $(ALIASES),--aliases="$(ALIASES_CSV)") \
+			$(if $(ALIASES),--aliases="$(ALIASES_CSV)") $(if $(RUNTIME),--runtime="$(RUNTIME)") \
 			--php-version="$(PHP_VER)" \
 			$(if $(MEMORY),--memory="$(MEMORY)") $(if $(CPUS),--cpu="$(CPUS)") $(if $(PIDS),--pids="$(PIDS)"); \
 	fi

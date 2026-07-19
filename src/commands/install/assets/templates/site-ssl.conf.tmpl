@@ -1,14 +1,17 @@
 {{/*
   Rendered into <prefix>/nginx/conf/<name>.conf instead of site.conf.tmpl once
   `wpdock ssl` has obtained a certificate for the site's domain. http answers
-  certbot's renewal challenges and redirects everything else; https proxies to
-  the site's container the way the plain vhost does.
+  certbot's renewal challenges and redirects everything else; https serves the
+  site the way the plain vhost does — proxying to apache, or serving static files
+  and passing php over FastCGI to php-fpm, depending on the site's runtime.
 
     {{.Name}}        site name, e.g. blog
     {{.ServerName}}  the server_name value, e.g. blog.com www.blog.com
     {{.Domain}}      the primary domain, which names the certificate directory
     {{.Upstream}}    the site's container, e.g. wpdock-blog
     {{.Prefix}}      the install prefix
+    {{.FPM}}         true when the site runs php-fpm rather than apache
+    {{.Root}}        the site's docroot on the host, mounted at /var/www/html
 */ -}}
 # wpdock site: {{.Name}} (https)
 
@@ -36,7 +39,25 @@ server {
     ssl_protocols        TLSv1.2 TLSv1.3;
 
     include {{.Prefix}}/nginx/conf.d/security.conf;
+{{if .FPM}}
+    root   {{.Root}};
+    index  index.php;
 
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    location ~ \.php$ {
+        try_files               $uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass            {{.Upstream}}:9000;
+        fastcgi_index           index.php;
+        include                 /etc/nginx/fastcgi_params;
+        fastcgi_param           SCRIPT_FILENAME /var/www/html$fastcgi_script_name;
+        fastcgi_param           PATH_INFO       $fastcgi_path_info;
+        fastcgi_param           HTTPS           on;
+    }
+{{else}}
     location / {
         proxy_pass         http://{{.Upstream}};
         proxy_set_header   Host              $host;
@@ -44,4 +65,4 @@ server {
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;
     }
-}
+{{end}}}

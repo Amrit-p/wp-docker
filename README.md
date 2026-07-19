@@ -2,9 +2,10 @@
 
 A command line tool for running WordPress and PHP sites in Docker on a single host.
 
-Each site is one container built from an official image
-(`wordpress:<version>-php<php-version>-apache` or `php:<php-version>-apache`). A shared
-nginx container reverse-proxies each site's domain to its container, and the sites share
+Each site is one container built from an official image. The runtime is chosen with
+`--runtime`: `fpm` (the default) uses the Alpine `-fpm-alpine` image and the shared nginx
+serves the static files while php-fpm handles PHP over FastCGI; `apache` uses the `-apache`
+image, where Apache serves everything and nginx just reverse-proxies to it. The sites share
 one MariaDB. A site is described entirely by the flags it was added with, which are stored
 as labels on its container, so there is no state file to keep in sync.
 
@@ -123,7 +124,7 @@ Creates and starts a site's container, then routes its domain to it.
 
 ```sh
 ./main site-add --prefix=<path> --name=<site> --domain=<domain> [--aliases=<d,d>] \
-  --type=<wordpress|php> [--wp-version=<v>] --php-version=<v> \
+  --type=<wordpress|php> [--runtime=<fpm|apache>] [--wp-version=<v>] --php-version=<v> \
   --memory=<m> --cpu=<c> --pids=<n> \
   [--db-host=<h> --db-name=<db> --db-user=<u> --db-password=<p>]
 ```
@@ -135,6 +136,7 @@ Creates and starts a site's container, then routes its domain to it.
 | `--domain` | yes | The primary domain nginx routes to the site, e.g. `blog.com`. |
 | `--aliases` | no | Comma-separated extra domains, added to `server_name` after `--domain`. |
 | `--type` | yes | `wordpress` or `php`, and nothing else. |
+| `--runtime` | no | `fpm` (default) or `apache`. `fpm` uses the `-fpm-alpine` image with nginx serving statics and FastCGI to php-fpm; `apache` uses the `-apache` image reverse-proxied over HTTP. |
 | `--wp-version` | wordpress | The WordPress version, e.g. `6.8`. Required for `wordpress`, ignored for `php`. |
 | `--php-version` | yes | The PHP version, e.g. `8.3`. |
 | `--memory` | no | Memory cap, in Docker's units. Default `512m`. |
@@ -145,9 +147,14 @@ Creates and starts a site's container, then routes its domain to it.
 | `--db-user` | wordpress | The user the site connects as. |
 | `--db-password` | wordpress | That user's password. |
 
-The image is `wordpress:<version>-php<php-version>-apache` or `php:<php-version>-apache`.
-The container is self-contained: Apache serves both static files and PHP, and nginx just
-proxies to it, so the WordPress and PHP vhosts are identical.
+The image follows `--runtime`. With the default `fpm` it is `wordpress:<version>-php<php-version>-fpm-alpine`
+or `php:<php-version>-fpm-alpine`: the container runs only php-fpm on port 9000, and the shared
+nginx serves the site's static files (from the same `data/<name>` mount, at the container's
+`/var/www/html`) and passes PHP to it over FastCGI. With `--runtime=apache` it is
+`wordpress:<version>-php<php-version>-apache` or `php:<php-version>-apache`: the container is
+self-contained, Apache serving both static files and PHP, and nginx just reverse-proxies to it.
+The vhost written into `nginx/conf/<name>.conf` branches on the runtime; sites added before this
+flag existed carry no `wpdock.runtime` label and are treated as `apache`.
 
 `site-add` does **not** create the database. Make it first with `db --create-user` (below),
 then pass the same host, name, user and password here. The four `--db-*` values are passed to
@@ -812,7 +819,7 @@ Two variables aim it:
 | --- | --- | --- |
 | `install` | `[FORCE=1] [YES=1]` | `install` — writes the tree, `Makefile`, `docker-compose.yml`, `.env` and `.env.example` at `PREFIX` |
 | `up` / `down` / `restart` / `logs` | | `docker compose -f $(PREFIX)/docker-compose.yml ...` |
-| `add-site` | `NAME= DOMAIN= [ALIASES="a b"] [TYPE=wp\|php] [DB=default\|<version>] [PHP_VERSION=] [WP_VERSION=] [MEMORY=] [CPUS=] [PIDS=]` | for `wp`: `db --create-user` (database and user `wp_<name>`, random password) then `site-add`; for `php`: `site-add` alone |
+| `add-site` | `NAME= DOMAIN= [ALIASES="a b"] [TYPE=wp\|php] [RUNTIME=fpm\|apache] [DB=default\|<version>] [PHP_VERSION=] [WP_VERSION=] [MEMORY=] [CPUS=] [PIDS=]` | for `wp`: `db --create-user` (database and user `wp_<name>`, random password) then `site-add`; for `php`: `site-add` alone |
 | `set-aliases` | `NAME= [ALIASES="a b"]` | `site-update --aliases=...`; empty `ALIASES` clears them; reminds you to rerun `make ssl` if the site has a certificate |
 | `teardown-all` | `[PURGE=1] [WIPE_DB=1] [YES=1]` | `site-nuke` for every managed site; `WIPE_DB=1` also `docker compose down -v` |
 | `ssl` | `NAME= [EMAIL=] [STAGING=1]` | `ssl` — `EMAIL` falls back to `WPDOCK_LETSENCRYPT_EMAIL` in `.env` |
@@ -832,6 +839,8 @@ What behaves differently from the old stack:
 - `TYPE=wp` maps to `--type=wordpress`; `DB=default` maps to `--db-host=wpdock-mariadb-11` and
   `DB=<version>` to `--db-host=wpdock-mariadb-<version>` (a MariaDB container you run yourself
   on the `wpdock` network).
+- `RUNTIME` is forwarded to `site-add --runtime` only when set; omit it and `site-add`'s own
+  default (`fpm`) applies.
 - `add-site` names the database and its user `wp_<name>` (dashes become underscores) as before,
   creating them with `WPDOCK_MARIADB_ROOT_PASSWORD` from `$(PREFIX)/.env`.
 - `reset-password` ignores the `USER` environment variable — only an explicit

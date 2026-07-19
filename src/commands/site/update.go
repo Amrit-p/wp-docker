@@ -70,6 +70,7 @@ func merge(base *Config, o *opts) {
 		{"domain", func() { base.Domain = o.cfg.Domain }},
 		{"aliases", func() { base.Aliases = o.cfg.Aliases }},
 		{"type", func() { base.Type = o.cfg.Type }},
+		{"runtime", func() { base.Runtime = o.cfg.Runtime }},
 		{"wp-version", func() { base.Version = o.cfg.Version }},
 		{"php-version", func() { base.PHP = o.cfg.PHP }},
 		{"memory", func() { base.Memory = o.cfg.Memory }},

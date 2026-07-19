@@ -32,6 +32,7 @@ type Config struct {
 	Domain  string
 	Aliases string
 	Type    string
+	Runtime string
 	Version string
 	PHP     string
 	Memory  string
@@ -61,6 +62,7 @@ func options(name string) *opts {
 	fs.StringVar(&cfg.Domain, "domain", "", "primary domain, the server_name nginx routes")
 	fs.StringVar(&cfg.Aliases, "aliases", "", "comma-separated extra domains")
 	fs.StringVar(&cfg.Type, "type", "", "wordpress or php")
+	fs.StringVar(&cfg.Runtime, "runtime", "fpm", "php runtime: fpm (nginx + php-fpm on alpine) or apache")
 	fs.StringVar(&cfg.Version, "wp-version", "", "wordpress version, e.g. 6.8 (wordpress only)")
 	fs.StringVar(&cfg.PHP, "php-version", "", "php version, e.g. 8.3")
 	fs.StringVar(&cfg.Memory, "memory", "512m", "memory cap (default 512m)")
@@ -132,6 +134,11 @@ func (c *Config) validate() error {
 	if c.PHP == "" {
 		return fmt.Errorf("--php-version is required")
 	}
+	switch c.Runtime {
+	case "fpm", "apache", "":
+	default:
+		return fmt.Errorf("--runtime: %q: want fpm or apache", c.Runtime)
+	}
 	if c.Type == "wordpress" {
 		if c.Version == "" {
 			return fmt.Errorf("--wp-version is required for a wordpress site")
@@ -150,11 +157,19 @@ func (c *Config) validate() error {
 	return nil
 }
 
+func (c *Config) fpm() bool { return c.Runtime == "fpm" }
+
 func (c *Config) baseImage() (string, error) {
 	switch c.Type {
 	case "wordpress":
+		if c.fpm() {
+			return fmt.Sprintf("wordpress:%s-php%s-fpm-alpine", c.Version, c.PHP), nil
+		}
 		return fmt.Sprintf("wordpress:%s-php%s-apache", c.Version, c.PHP), nil
 	case "php":
+		if c.fpm() {
+			return fmt.Sprintf("php:%s-fpm-alpine", c.PHP), nil
+		}
 		return fmt.Sprintf("php:%s-apache", c.PHP), nil
 	}
 	return "", fmt.Errorf("--type: %q: want wordpress or php", c.Type)
@@ -171,7 +186,7 @@ func prepareImage(c *Config) (string, error) {
 	if err := ensureImage(base); err != nil {
 		return "", err
 	}
-	if err := ensureSSHImage(base); err != nil {
+	if err := ensureSSHImage(base, c.fpm()); err != nil {
 		return "", err
 	}
 	return sshImage(base), nil
@@ -181,7 +196,7 @@ func sshImage(base string) string {
 	return "wpdock-ssh:" + strings.NewReplacer(":", "-", "/", "-").Replace(base)
 }
 
-func ensureSSHImage(base string) error {
+func ensureSSHImage(base string, alpine bool) error {
 	tag := sshImage(base)
 	if err := docker("image", "inspect", tag); err == nil {
 		return nil
@@ -193,10 +208,15 @@ func ensureSSHImage(base string) error {
 	}
 	defer os.RemoveAll(ctx)
 
+	dockerfile := sshDockerfile
+	if alpine {
+		dockerfile = sshDockerfileAlpine
+	}
+
 	if err := os.WriteFile(filepath.Join(ctx, "entrypoint.sh"), []byte(sshEntrypoint), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(ctx, "Dockerfile"), []byte("FROM "+base+"\n"+sshDockerfile), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ctx, "Dockerfile"), []byte("FROM "+base+"\n"+dockerfile), 0o644); err != nil {
 		return err
 	}
 
@@ -218,11 +238,26 @@ ENTRYPOINT ["/usr/local/bin/wpdock-sshd"]
 CMD ["apache2-foreground"]
 `
 
+const sshDockerfileAlpine = `RUN set -eux; \
+    apk add --no-cache openssh-server sudo curl less bash shadow; \
+    mkdir -p /run/sshd; \
+    printf 'PasswordAuthentication yes\nPermitRootLogin yes\n' >> /etc/ssh/sshd_config; \
+    curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar; \
+    chmod +x /usr/local/bin/wp; \
+    curl -fsSL https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+COPY entrypoint.sh /usr/local/bin/wpdock-sshd
+RUN chmod +x /usr/local/bin/wpdock-sshd
+ENTRYPOINT ["/usr/local/bin/wpdock-sshd"]
+CMD ["php-fpm"]
+`
+
 const sshEntrypoint = `#!/bin/sh
 if [ -n "$WPDOCK_SSH_USER" ]; then
-	id "$WPDOCK_SSH_USER" >/dev/null 2>&1 || useradd -o -u 33 -g 33 -m -s /bin/bash "$WPDOCK_SSH_USER" 2>/dev/null
+	uid=$(id -u www-data 2>/dev/null || echo 33)
+	gid=$(id -g www-data 2>/dev/null || echo 33)
+	id "$WPDOCK_SSH_USER" >/dev/null 2>&1 || useradd -o -u "$uid" -g "$gid" -m -s /bin/bash "$WPDOCK_SSH_USER" 2>/dev/null
 	echo "$WPDOCK_SSH_USER:$WPDOCK_SSH_PASSWORD" | chpasswd
-	printf '#33 ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/wpdock
+	printf '#%s ALL=(ALL) NOPASSWD:ALL\n' "$uid" > /etc/sudoers.d/wpdock
 	chmod 0440 /etc/sudoers.d/wpdock
 fi
 ssh-keygen -A >/dev/null 2>&1
@@ -331,6 +366,7 @@ func labelArgs(c *Config) []string {
 	pairs := [][2]string{
 		{"managed", "true"},
 		{"type", c.Type},
+		{"runtime", c.Runtime},
 		{"domain", c.Domain},
 		{"aliases", c.Aliases},
 		{"version", c.Version},
@@ -421,6 +457,7 @@ func inspect(name string) (*Config, error) {
 	return &Config{
 		Name:    name,
 		Type:    labels[labelPrefix+"type"],
+		Runtime: runtimeOrDefault(labels[labelPrefix+"runtime"]),
 		Domain:  labels[labelPrefix+"domain"],
 		Aliases: labels[labelPrefix+"aliases"],
 		Version: labels[labelPrefix+"version"],
@@ -436,6 +473,13 @@ func inspect(name string) (*Config, error) {
 		SSHUser: labels[labelPrefix+"ssh-user"],
 		SSHPass: envValue(env, "WPDOCK_SSH_PASSWORD"),
 	}, nil
+}
+
+func runtimeOrDefault(v string) string {
+	if v == "" {
+		return "apache"
+	}
+	return v
 }
 
 func envValue(env []string, key string) string {
@@ -463,6 +507,8 @@ type vhost struct {
 	Domain     string
 	Upstream   string
 	Prefix     string
+	FPM        bool
+	Root       string
 }
 
 // hasCert reports whether the site's domain holds a certificate. The check is
@@ -497,6 +543,8 @@ func writeVhost(root string, c *Config) error {
 		Domain:     c.Domain,
 		Upstream:   container(c.Name),
 		Prefix:     root,
+		FPM:        c.fpm(),
+		Root:       dataDir(root, c.Name),
 	}); err != nil {
 		return err
 	}
@@ -548,6 +596,7 @@ func field(key, value string) {
 func describeCore(c *Config) {
 	fmt.Printf("site %s\n\n", c.Name)
 	field("type", c.Type)
+	field("runtime", runtimeOrDefault(c.Runtime))
 	field("domain", serverName(c))
 	if c.Type == "wordpress" {
 		field("wordpress", c.Version)
